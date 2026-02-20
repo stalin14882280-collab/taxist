@@ -224,7 +224,6 @@ def get_car_by_id(car_id):
 def can_claim_daily(last_daily):
     return time_module.time() - last_daily >= 24 * 3600
 
-# ---------- НОВАЯ СИСТЕМА ПРОЦЕНТОВ ----------
 def apply_interest(user_id):
     """
     Начисляет проценты на долг пользователя за каждый прошедший 5-часовой интервал.
@@ -267,7 +266,6 @@ def add_exp(user_id, amount):
     update_user(user_id, exp=new_exp, level=level)
     return level, new_exp, leveled_up
 
-# ---------- ГОНКА ЧАЕВЫХ ----------
 def get_current_week_start() -> int:
     now = datetime.now()
     days_to_subtract = now.weekday()
@@ -379,7 +377,6 @@ async def tip_race_scheduler():
         else:
             await asyncio.sleep(1800)
 
-# ---------- РЕКЛАМА КАНАЛА ----------
 CHANNEL_USERNAME = "@taxistchanel"
 CHANNEL_LINK = "https://t.me/taxistchanel"
 CHANNEL_BONUS = 30000
@@ -443,7 +440,6 @@ async def daily_ad_task():
             await asyncio.sleep(0.5)
         logging.info(f"Ежедневная рассылка: отправлено {sent_count} сообщений")
 
-# ---------- КЛАВИАТУРЫ ----------
 def main_menu():
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="🚖 Работать таксистом", callback_data="work_menu"))
@@ -506,7 +502,6 @@ def admin_menu():
     builder.adjust(1)
     return builder.as_markup()
 
-# ---------- ОСНОВНЫЕ КОМАНДЫ ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -603,7 +598,6 @@ async def check_subscription_callback(callback: types.CallbackQuery):
             reply_markup=callback.message.reply_markup
         )
 
-# ---------- АДМИН ПАНЕЛЬ ----------
 @dp.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: types.CallbackQuery):
     await callback.answer()
@@ -876,8 +870,7 @@ async def create_promo(message: types.Message):
     except sqlite3.IntegrityError:
         await message.reply("❌ Промокод с таким кодом уже существует.")
     conn.close()
-
-# ---------- НОВЫЙ АДМИН-ОБРАБОТЧИК ДЛЯ СБРОСА ВСЕХ ИГРОКОВ ----------
+    
 @dp.callback_query(F.data == "admin_reset_all_confirm")
 async def admin_reset_all_confirm(callback: types.CallbackQuery):
     await callback.answer()
@@ -934,7 +927,6 @@ async def admin_reset_all_execute(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
 
-# ---------- ПРОМОКОДЫ ----------
 @dp.callback_query(F.data == "promocode_menu")
 async def promocode_menu(callback: types.CallbackQuery):
     await callback.answer()
@@ -993,7 +985,6 @@ async def activate_promo(message: types.Message):
         reply_markup=main_menu()
     )
 
-# ---------- ГОНКА ЧАЕВЫХ ----------
 @dp.callback_query(F.data == "tip_race_menu")
 async def tip_race_menu(callback: types.CallbackQuery):
     await callback.answer()
@@ -1039,7 +1030,6 @@ async def tip_race_menu(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
-# ---------- ОСНОВНОЙ ГЕЙМПЛЕЙ ----------
 @dp.callback_query(F.data == "top_players")
 async def top_players(callback: types.CallbackQuery):
     await callback.answer()
@@ -1724,7 +1714,6 @@ async def process_fuel(callback: types.CallbackQuery):
     )
     await callback.message.edit_text(success_message, reply_markup=main_menu())
 
-# ---------- ЗАПУСК ----------
 async def main():
     init_db()
     print("Бот запущен...")
@@ -1733,4 +1722,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+
     asyncio.run(main())
