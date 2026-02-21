@@ -117,7 +117,6 @@ def init_db():
     cur.execute("SELECT COUNT(*) FROM cars")
     if cur.fetchone()[0] == 0:
         cars_data = [
-            # Машины с обновлёнными ценами (от самой дешёвой к дорогой)
             ("Жигули", 5000, 10, 30, 40, 2),
             ("Renault Logan", 10000, 35, 70, 50, 2.0),
             ("Hyundai Solaris", 12000, 40, 80, 50, 2.2),
@@ -225,10 +224,6 @@ def can_claim_daily(last_daily):
     return time_module.time() - last_daily >= 24 * 3600
 
 def apply_interest(user_id):
-    """
-    Начисляет проценты на долг пользователя за каждый прошедший 5-часовой интервал.
-    Проценты: 5% от текущего долга за каждый интервал.
-    """
     user = get_user(user_id)
     if user["debt"] == 0:
         return
@@ -377,12 +372,13 @@ async def tip_race_scheduler():
         else:
             await asyncio.sleep(1800)
 
+# ---------- РЕКЛАМА КАНАЛА ----------
 CHANNEL_USERNAME = "@taxistchanel"
 CHANNEL_LINK = "https://t.me/taxistchanel"
 CHANNEL_BONUS = 30000
 
-async def send_ad_message(chat_id: int):
-    text = (
+def get_ad_text():
+    return (
         "🎁 **СЕКРЕТНЫЙ БОНУС ДЛЯ СВОИХ!** 🎁\n\n"
         "Привет, водила! Твой талант зарабатывать деньги не остался незамеченным. "
         "Для самых преданных таксистов у нас есть закрытый канал, где мы публикуем:\n\n"
@@ -394,6 +390,9 @@ async def send_ad_message(chat_id: int):
         "Эти деньги можно потратить на новую машину, заправку или погасить кредит.\n\n"
         "👉 **Жми на кнопку ниже, подписывайся и забирай бонус!**"
     )
+
+async def send_ad_message(chat_id: int):
+    text = get_ad_text()
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url=CHANNEL_LINK))
     builder.add(InlineKeyboardButton(text="✅ Я подписался, получить бонус", callback_data="check_subscription"))
@@ -422,7 +421,7 @@ async def give_channel_bonus(user_id: int):
 async def daily_ad_task():
     while True:
         now = datetime.now()
-        target_time = time(12, 0)  # 12:00
+        target_time = time(12, 0)
         target_datetime = datetime.combine(now.date(), target_time)
         if now > target_datetime:
             target_datetime += timedelta(days=1)
@@ -440,6 +439,7 @@ async def daily_ad_task():
             await asyncio.sleep(0.5)
         logging.info(f"Ежедневная рассылка: отправлено {sent_count} сообщений")
 
+# ---------- КЛАВИАТУРЫ ----------
 def main_menu():
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="🚖 Работать таксистом", callback_data="work_menu"))
@@ -497,11 +497,13 @@ def admin_menu():
     builder.add(InlineKeyboardButton(text="📊 Статистика игроков", callback_data="admin_stats"))
     builder.add(InlineKeyboardButton(text="🔄 Обнулить счёт игрока", callback_data="admin_reset_user_menu"))
     builder.add(InlineKeyboardButton(text="🔄 Сбросить ВСЕХ игроков", callback_data="admin_reset_all_confirm"))
+    builder.add(InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin_broadcast_confirm"))
     builder.add(InlineKeyboardButton(text="🎫 Создать промокод", callback_data="admin_create_promo"))
     builder.add(InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu"))
     builder.adjust(1)
     return builder.as_markup()
 
+# ---------- ОСНОВНЫЕ КОМАНДЫ ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -598,6 +600,7 @@ async def check_subscription_callback(callback: types.CallbackQuery):
             reply_markup=callback.message.reply_markup
         )
 
+# ---------- АДМИН ПАНЕЛЬ ----------
 @dp.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: types.CallbackQuery):
     await callback.answer()
@@ -870,7 +873,8 @@ async def create_promo(message: types.Message):
     except sqlite3.IntegrityError:
         await message.reply("❌ Промокод с таким кодом уже существует.")
     conn.close()
-    
+
+# ---------- НОВЫЙ АДМИН-ОБРАБОТЧИК ДЛЯ СБРОСА ВСЕХ ИГРОКОВ ----------
 @dp.callback_query(F.data == "admin_reset_all_confirm")
 async def admin_reset_all_confirm(callback: types.CallbackQuery):
     await callback.answer()
@@ -927,6 +931,59 @@ async def admin_reset_all_execute(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
 
+# ---------- НОВЫЙ АДМИН-ОБРАБОТЧИК ДЛЯ РАССЫЛКИ ----------
+@dp.callback_query(F.data == "admin_broadcast_confirm")
+async def admin_broadcast_confirm(callback: types.CallbackQuery):
+    await callback.answer()
+    user_id = callback.from_user.id
+    if user_id not in admin_users:
+        await callback.message.edit_text("❌ Нет доступа.", reply_markup=main_menu())
+        return
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="✅ ДА, отправить всем", callback_data="admin_broadcast_execute"))
+    builder.add(InlineKeyboardButton(text="❌ НЕТ, отмена", callback_data="admin_panel"))
+    builder.adjust(1)
+    await callback.message.edit_text(
+        "⚠️ **ВНИМАНИЕ!** Это отправит рекламное сообщение **всем пользователям**, которые ещё не получили бонус за подписку.\n\n"
+        f"Текст сообщения:\n\n{get_ad_text()}\n\n"
+        "Вы уверены?",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data == "admin_broadcast_execute")
+async def admin_broadcast_execute(callback: types.CallbackQuery):
+    await callback.answer()
+    user_id = callback.from_user.id
+    if user_id not in admin_users:
+        await callback.message.edit_text("❌ Нет доступа.", reply_markup=main_menu())
+        return
+
+    await callback.message.edit_text("📢 Начинаю рассылку... Это может занять некоторое время.", reply_markup=admin_menu())
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM users WHERE channel_bonus_received = 0")
+    users = cur.fetchall()
+    conn.close()
+
+    sent = 0
+    failed = 0
+    for (uid,) in users:
+        if await send_ad_message(uid):
+            sent += 1
+        else:
+            failed += 1
+        await asyncio.sleep(0.5)
+
+    await callback.message.edit_text(
+        f"✅ Рассылка завершена!\n"
+        f"📨 Отправлено: {sent}\n"
+        f"❌ Ошибок: {failed}",
+        reply_markup=admin_menu()
+    )
+
+# ---------- ПРОМОКОДЫ ----------
 @dp.callback_query(F.data == "promocode_menu")
 async def promocode_menu(callback: types.CallbackQuery):
     await callback.answer()
@@ -985,6 +1042,7 @@ async def activate_promo(message: types.Message):
         reply_markup=main_menu()
     )
 
+# ---------- ГОНКА ЧАЕВЫХ ----------
 @dp.callback_query(F.data == "tip_race_menu")
 async def tip_race_menu(callback: types.CallbackQuery):
     await callback.answer()
@@ -1030,6 +1088,7 @@ async def tip_race_menu(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
+# ---------- ОСНОВНОЙ ГЕЙМПЛЕЙ ----------
 @dp.callback_query(F.data == "top_players")
 async def top_players(callback: types.CallbackQuery):
     await callback.answer()
@@ -1714,6 +1773,7 @@ async def process_fuel(callback: types.CallbackQuery):
     )
     await callback.message.edit_text(success_message, reply_markup=main_menu())
 
+# ---------- ЗАПУСК ----------
 async def main():
     init_db()
     print("Бот запущен...")
@@ -1722,5 +1782,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-
     asyncio.run(main())
