@@ -17,6 +17,7 @@ START_BALANCE = 5000
 DAILY_REWARD = 1000
 FUEL_PRICE = 2
 ADMIN_PASSWORD = "060510"
+PROMO_CHANNEL_LINK = "https://t.me/taxistchanel"  # ссылка на канал для промокодов
 
 # Список спонсорских каналов (username без @)
 SPONSOR_CHANNELS = [
@@ -471,6 +472,7 @@ def main_menu():
     builder.add(InlineKeyboardButton(text="🎁 Ежедневная награда", callback_data="daily"))
     builder.add(InlineKeyboardButton(text="👑 Админ панель", callback_data="admin_panel"))
     builder.add(InlineKeyboardButton(text="🏆 Топ игроков", callback_data="top_players"))
+    builder.add(InlineKeyboardButton(text="🎫 Промокоды", callback_data="promocode_menu"))  # добавлено
     builder.adjust(2)
     return builder.as_markup()
 
@@ -715,6 +717,27 @@ async def top_players(callback: types.CallbackQuery, **kwargs):
     except Exception as e:
         logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(text, reply_markup=main_menu())
+
+@dp.callback_query(F.data == "promocode_menu")
+@subscription_required
+async def promocode_menu(callback: types.CallbackQuery, **kwargs):
+    await callback.answer()
+    text = (
+        "🎫 **Промокоды**\n\n"
+        "Вводи промокоды и получай бонусы!\n\n"
+        "Как получить промокод?\n"
+        "• Подпишись на наш канал @taxistchanel\n"
+        "• Следи за новостями и розыгрышами\n"
+        "• Участвуй в конкурсах\n\n"
+        "👉 **Чтобы активировать промокод, введи команду:**\n"
+        "`/promo ТВОЙ_КОД`\n\n"
+        "Например: `/promo BONUS30000`"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url=PROMO_CHANNEL_LINK))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
+    builder.adjust(1)
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "work_menu")
 @subscription_required
