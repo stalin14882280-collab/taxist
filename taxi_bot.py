@@ -17,7 +17,6 @@ START_BALANCE = 5000
 DAILY_REWARD = 1000
 FUEL_PRICE = 2
 ADMIN_PASSWORD = "060510"
-PROMO_CHANNEL_LINK = "https://t.me/taxistchanel"  # ссылка на канал для промокодов
 
 # Список спонсорских каналов (username без @)
 SPONSOR_CHANNELS = [
@@ -472,7 +471,7 @@ def main_menu():
     builder.add(InlineKeyboardButton(text="🎁 Ежедневная награда", callback_data="daily"))
     builder.add(InlineKeyboardButton(text="👑 Админ панель", callback_data="admin_panel"))
     builder.add(InlineKeyboardButton(text="🏆 Топ игроков", callback_data="top_players"))
-    builder.add(InlineKeyboardButton(text="🎫 Промокоды", callback_data="promocode_menu"))  # добавлено
+    builder.add(InlineKeyboardButton(text="🎫 Промокоды", callback_data="promocode_menu"))
     builder.adjust(2)
     return builder.as_markup()
 
@@ -734,7 +733,7 @@ async def promocode_menu(callback: types.CallbackQuery, **kwargs):
         "Например: `/promo BONUS30000`"
     )
     builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url=PROMO_CHANNEL_LINK))
+    builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url="https://t.me/taxistchanel"))
     builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
     builder.adjust(1)
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
@@ -1468,6 +1467,18 @@ async def activate_promo(message: types.Message, **kwargs):
     )
 
 # ---------- АДМИН-ХЕНДЛЕРЫ (без подписки) ----------
+@dp.callback_query(F.data == "admin_panel")
+async def admin_panel(callback: types.CallbackQuery, **kwargs):
+    await callback.answer()
+    user_id = callback.from_user.id
+    if user_id not in admin_users:
+        await callback.message.edit_text("❌ У вас нет доступа к админ-панели.\nВведите /admin и правильный пароль для входа.", reply_markup=main_menu())
+        return
+    new_text = "👑 Админ панель\nВыберите действие:"
+    if callback.message.text == new_text and callback.message.reply_markup == admin_menu():
+        return
+    await callback.message.edit_text(new_text, reply_markup=admin_menu())
+
 @dp.callback_query(F.data == "admin_add_money")
 async def admin_add_money(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
