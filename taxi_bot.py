@@ -6,11 +6,10 @@ import random
 import time as time_module
 import os
 from datetime import datetime, timedelta, time
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram import F
 
 BOT_TOKEN = "8541301484:AAHwGAE-JjcdzwO1gokqQyINamTDARIWfEc"
 DB_NAME = "taxi_game.db"
@@ -18,6 +17,13 @@ START_BALANCE = 5000
 DAILY_REWARD = 1000
 FUEL_PRICE = 2
 ADMIN_PASSWORD = "060510"
+
+# Список спонсорских каналов (username без @)
+SPONSOR_CHANNELS = [
+    "meduzakin1",
+    "NikKatFUN",
+    "taxistchanel"
+]
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -55,7 +61,6 @@ def init_db():
             angry_passengers INTEGER DEFAULT 0,
             used_promocodes TEXT DEFAULT '[]',
             last_tip_reward_week INTEGER DEFAULT 0,
-            channel_bonus_received INTEGER DEFAULT 0,
             last_interest INTEGER DEFAULT 0
         )
     """)
@@ -78,8 +83,6 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN used_promocodes TEXT DEFAULT '[]'")
     if 'last_tip_reward_week' not in columns:
         cur.execute("ALTER TABLE users ADD COLUMN last_tip_reward_week INTEGER DEFAULT 0")
-    if 'channel_bonus_received' not in columns:
-        cur.execute("ALTER TABLE users ADD COLUMN channel_bonus_received INTEGER DEFAULT 0")
     if 'last_interest' not in columns:
         cur.execute("ALTER TABLE users ADD COLUMN last_interest INTEGER DEFAULT 0")
     
@@ -148,17 +151,17 @@ def init_db():
 def get_user(user_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("SELECT balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy_passengers, angry_passengers, used_promocodes, last_tip_reward_week, channel_bonus_received, last_interest FROM users WHERE user_id = ?", (user_id,))
+    cur.execute("SELECT balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy_passengers, angry_passengers, used_promocodes, last_tip_reward_week, last_interest FROM users WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
     if row is None:
         cur.execute(
-            "INSERT INTO users (user_id, balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy_passengers, angry_passengers, used_promocodes, last_tip_reward_week, channel_bonus_received, last_interest) VALUES (?, ?, 0, 0, '[]', 0, 0, 1, '[]', 0, 0, '[]', 0, 0, 0)",
+            "INSERT INTO users (user_id, balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy_passengers, angry_passengers, used_promocodes, last_tip_reward_week, last_interest) VALUES (?, ?, 0, 0, '[]', 0, 0, 1, '[]', 0, 0, '[]', 0, 0)",
             (user_id, START_BALANCE)
         )
         conn.commit()
-        balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy, angry, used, last_tip, channel_bonus, last_interest = START_BALANCE, 0, 0, '[]', 0, 0, 1, '[]', 0, 0, '[]', 0, 0, 0
+        balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy, angry, used, last_tip, last_interest = START_BALANCE, 0, 0, '[]', 0, 0, 1, '[]', 0, 0, '[]', 0, 0
     else:
-        balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy, angry, used, last_tip, channel_bonus, last_interest = row
+        balance, debt, last_daily, cars, credits_count, exp, level, hired_cars, happy, angry, used, last_tip, last_interest = row
     conn.close()
     cars_list = json.loads(cars)
     if cars_list and isinstance(cars_list[0], int):
@@ -180,7 +183,6 @@ def get_user(user_id):
         "angry": angry,
         "used_promocodes": used_list,
         "last_tip_reward_week": last_tip,
-        "channel_bonus_received": channel_bonus,
         "last_interest": last_interest
     }
 
@@ -372,92 +374,122 @@ async def tip_race_scheduler():
         else:
             await asyncio.sleep(1800)
 
-# ---------- РЕКЛАМА КАНАЛА ----------
-CHANNEL_USERNAME = "@taxistchanel"
-CHANNEL_LINK = "https://t.me/taxistchanel"
-CHANNEL_BONUS = 30000
+# ---------- ПРОВЕРКА ПОДПИСОК НА СПОНСОРОВ ----------
+async def check_user_subscriptions(user_id: int) -> tuple[bool, list]:
+    not_subscribed = []
+    for channel in SPONSOR_CHANNELS:
+        try:
+            member = await bot.get_chat_member(chat_id=f"@{channel}", user_id=user_id)
+            if member.status in ['left', 'kicked']:
+                not_subscribed.append(channel)
+        except Exception as e:
+            logging.error(f"Ошибка проверки канала {channel} для {user_id}: {e}")
+            not_subscribed.append(channel)
+    return (len(not_subscribed) == 0, not_subscribed)
 
-def get_ad_text():
-    return (
-        "🎁 **СЕКРЕТНЫЙ БОНУС ДЛЯ СВОИХ!** 🎁\n\n"
-        "Привет, водила! Твой талант зарабатывать деньги не остался незамеченным. "
-        "Для самых преданных таксистов у нас есть закрытый канал, где мы публикуем:\n\n"
-        "🚀 **Эксклюзивные промокоды** на халявное топливо\n"
-        "💎 **Розыгрыши** крутых тачек и внутриигровой валюты\n"
-        "📢 **Новости** и анонсы новых фич первыми\n"
-        "🤑 **И просто место где можно** пообщаться\n\n"
-        f"И Самое Главное — за переход и подписку мы начислим тебе **{CHANNEL_BONUS}$** на счёт! "
-        "Эти деньги можно потратить на новую машину, заправку или погасить кредит.\n\n"
-        "👉 **Жми на кнопку ниже, подписывайся и забирай бонус!**"
-    )
+def subscription_required(handler):
+    async def wrapper(*args, **kwargs):
+        event = args[0]
+        if isinstance(event, types.Message):
+            user_id = event.from_user.id
+        elif isinstance(event, types.CallbackQuery):
+            user_id = event.from_user.id
+        else:
+            return await handler(*args, **kwargs)
 
-async def send_ad_message(chat_id: int):
-    text = get_ad_text()
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url=CHANNEL_LINK))
-    builder.add(InlineKeyboardButton(text="✅ Я подписался, получить бонус", callback_data="check_subscription"))
-    builder.adjust(1)
-    try:
-        await bot.send_message(chat_id, text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        return True
-    except Exception as e:
-        logging.error(f"Не удалось отправить рекламу пользователю {chat_id}: {e}")
-        return False
+        ok, bad_channels = await check_user_subscriptions(user_id)
+        if not ok:
+            channels_text = "\n".join([f"👉 @{ch}" for ch in bad_channels])
+            text = (
+                "❌ **Доступ запрещён!**\n\n"
+                "Для использования бота необходимо быть подписанным на всех спонсоров.\n"
+                f"Вы отписались от:\n{channels_text}\n\n"
+                "Подпишитесь и нажмите /start для проверки."
+            )
+            builder = InlineKeyboardBuilder()
+            for ch in bad_channels:
+                builder.add(InlineKeyboardButton(text=f"🔔 {ch}", url=f"https://t.me/{ch}"))
+            builder.add(InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sponsors"))
+            builder.adjust(1)
 
-async def is_user_subscribed(user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except Exception as e:
-        logging.error(f"Ошибка проверки подписки для {user_id}: {e}")
-        return False
+            if isinstance(event, types.CallbackQuery):
+                await event.answer()
+                await event.message.edit_text(text, reply_markup=builder.as_markup())
+            else:
+                await event.reply(text, reply_markup=builder.as_markup())
+            return
+        return await handler(*args, **kwargs)
+    return wrapper
 
-async def give_channel_bonus(user_id: int):
-    user = get_user(user_id)
-    new_balance = user["balance"] + CHANNEL_BONUS
-    update_user(user_id, balance=new_balance, channel_bonus_received=1)
-    return new_balance
+@dp.callback_query(F.data == "check_sponsors")
+@subscription_required
+async def check_sponsors_callback(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
+    await callback.message.answer("✅ Спасибо за подписку! Добро пожаловать обратно.", reply_markup=main_menu())
 
-async def daily_ad_task():
+# ---------- ЕЖЕДНЕВНАЯ ПРОВЕРКА ПОДПИСОК ----------
+async def daily_subscription_check():
     while True:
-        now = datetime.now()
-        target_time = time(12, 0)
-        target_datetime = datetime.combine(now.date(), target_time)
-        if now > target_datetime:
-            target_datetime += timedelta(days=1)
-        wait_seconds = (target_datetime - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
+        await asyncio.sleep(24 * 60 * 60)
         conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
-        cur.execute("SELECT user_id FROM users WHERE channel_bonus_received = 0")
-        users_to_notify = cur.fetchall()
+        cur.execute("SELECT user_id FROM users")
+        all_users = cur.fetchall()
         conn.close()
-        sent_count = 0
-        for (user_id,) in users_to_notify:
-            if await send_ad_message(user_id):
-                sent_count += 1
+        for (user_id,) in all_users:
+            ok, bad_channels = await check_user_subscriptions(user_id)
+            if not ok:
+                channels_text = "\n".join([f"👉 @{ch}" for ch in bad_channels])
+                text = (
+                    "⚠️ **Внимание!**\n\n"
+                    "Вы отписались от спонсоров нашего бота. "
+                    "Для продолжения использования подпишитесь обратно:\n"
+                    f"{channels_text}\n\n"
+                    "После подписки нажмите /start для восстановления доступа."
+                )
+                builder = InlineKeyboardBuilder()
+                for ch in bad_channels:
+                    builder.add(InlineKeyboardButton(text=f"🔔 {ch}", url=f"https://t.me/{ch}"))
+                builder.add(InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sponsors"))
+                builder.adjust(1)
+                try:
+                    await bot.send_message(user_id, text, reply_markup=builder.as_markup())
+                except Exception as e:
+                    logging.error(f"Не удалось отправить уведомление {user_id}: {e}")
             await asyncio.sleep(0.5)
-        logging.info(f"Ежедневная рассылка: отправлено {sent_count} сообщений")
 
 # ---------- КЛАВИАТУРЫ ----------
 def main_menu():
     builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="🚖 Работать таксистом", callback_data="work_menu"))
-    builder.add(InlineKeyboardButton(text="🏭 Работать на заводе", callback_data="factory"))
-    builder.add(InlineKeyboardButton(text="💰 Взять кредит", callback_data="loan_menu"))
-    builder.add(InlineKeyboardButton(text="💳 Погасить кредит", callback_data="repay_menu"))
-    builder.add(InlineKeyboardButton(text="🏎 Купить машину", callback_data="buy_menu"))
-    builder.add(InlineKeyboardButton(text="📊 Статус", callback_data="status"))
-    builder.add(InlineKeyboardButton(text="🚗 Гараж", callback_data="garage"))
-    builder.add(InlineKeyboardButton(text="⛽ Заправка", callback_data="refuel_menu"))
+    builder.add(InlineKeyboardButton(text="🚖 Работать", callback_data="work_main"))
+    builder.add(InlineKeyboardButton(text="🏦 Банк", callback_data="bank_main"))
+    builder.add(InlineKeyboardButton(text="📊 Мой статус", callback_data="status"))
     builder.add(InlineKeyboardButton(text="🎁 Ежедневная награда", callback_data="daily"))
-    builder.add(InlineKeyboardButton(text="📈 Мой уровень", callback_data="level_info"))
-    builder.add(InlineKeyboardButton(text="👨‍✈️ Наёмные водители", callback_data="hired_menu"))
-    builder.add(InlineKeyboardButton(text="🏷 Продать машину", callback_data="sell_car_menu"))
-    builder.add(InlineKeyboardButton(text="🎫 Промокоды", callback_data="promocode_menu"))
-    builder.add(InlineKeyboardButton(text="🏁 Гонка чаевых", callback_data="tip_race_menu"))
     builder.add(InlineKeyboardButton(text="👑 Админ панель", callback_data="admin_panel"))
     builder.add(InlineKeyboardButton(text="🏆 Топ игроков", callback_data="top_players"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+def work_submenu():
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="🚖 Работать таксистом", callback_data="work_menu"))
+    builder.add(InlineKeyboardButton(text="🏭 Работать на заводе", callback_data="factory"))
+    builder.add(InlineKeyboardButton(text="🚗 Гараж", callback_data="garage"))
+    builder.add(InlineKeyboardButton(text="⛽ Заправка", callback_data="refuel_menu"))
+    builder.add(InlineKeyboardButton(text="🏎 Купить машину", callback_data="buy_menu"))
+    builder.add(InlineKeyboardButton(text="🏷 Продать машину", callback_data="sell_car_menu"))
+    builder.add(InlineKeyboardButton(text="👨‍✈️ Наёмные водители", callback_data="hired_menu"))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
+    builder.adjust(2)
+    return builder.as_markup()
+
+def bank_submenu():
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="💰 Взять кредит", callback_data="loan_menu"))
+    builder.add(InlineKeyboardButton(text="💳 Погасить кредит", callback_data="repay_menu"))
+    builder.add(InlineKeyboardButton(text="🏁 Гонка чаевых", callback_data="tip_race_menu"))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
     builder.adjust(2)
     return builder.as_markup()
 
@@ -505,6 +537,7 @@ def admin_menu():
 
 # ---------- ОСНОВНЫЕ КОМАНДЫ ----------
 @dp.message(Command("start"))
+@subscription_required
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     get_user(user_id)
@@ -520,6 +553,7 @@ async def cmd_start(message: types.Message):
     )
 
 @dp.message(Command("commands"))
+@subscription_required
 async def cmd_commands(message: types.Message):
     commands_text = """
 📋 **Список команд:**
@@ -566,53 +600,803 @@ async def cmd_admin(message: types.Message):
     else:
         await message.reply("❌ Неверный пароль!")
 
-@dp.callback_query(F.data == "check_subscription")
-async def check_subscription_callback(callback: types.CallbackQuery):
+# ---------- ОБРАБОТЧИКИ ДЛЯ ПОДМЕНЮ ----------
+@dp.callback_query(F.data == "work_main")
+@subscription_required
+async def work_main(callback: types.CallbackQuery):
     await callback.answer()
+    await callback.message.delete()
+    await callback.message.answer("🚖 Выберите действие:", reply_markup=work_submenu())
+
+@dp.callback_query(F.data == "bank_main")
+@subscription_required
+async def bank_main(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
+    await callback.message.answer("🏦 Банковские операции:", reply_markup=bank_submenu())
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
+    await callback.message.answer("Главное меню:", reply_markup=main_menu())
+
+# ---------- ИГРОВЫЕ ХЕНДЛЕРЫ ----------
+@dp.callback_query(F.data == "status")
+@subscription_required
+async def show_status(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
+    user = get_user(user_id)
+    cars_count = len(user["cars"])
+    hired_count = len(user["hired_cars"])
+    next_exp = exp_to_next_level(user["level"])
+    total_passengers = user["happy"] + user["angry"]
+    if total_passengers > 0:
+        rating = (user["happy"] / total_passengers) * 100
+        rating_line = f"😊 Довольных: {user['happy']} | 😠 Недовольных: {user['angry']}\n⭐ Рейтинг: {rating:.1f}%"
+    else:
+        rating_line = "😐 Пока нет пассажиров"
+    new_text = (f"📊 Ваш статус:\n"
+                f"💰 Баланс: ${user['balance']}\n"
+                f"💳 Долг: ${user['debt']}\n"
+                f"🚗 Машин в гараже: {cars_count}\n"
+                f"👨‍✈️ Наёмных водителей: {hired_count}\n"
+                f"📊 Кредитов взято: {user['credits_count']}/5\n"
+                f"📈 Уровень: {user['level']} (опыт: {user['exp']}/{next_exp})\n"
+                f"{rating_line}")
+    await callback.message.delete()
+    await callback.message.answer(new_text, reply_markup=main_menu())
+
+@dp.callback_query(F.data == "daily")
+@subscription_required
+async def daily_reward(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    if can_claim_daily(user["last_daily"]):
+        new_balance = user["balance"] + DAILY_REWARD
+        update_user(user_id, balance=new_balance, last_daily=int(time_module.time()))
+        new_text = f"🎁 Вы получили ежедневную награду: +{DAILY_REWARD}$\nТеперь у вас ${new_balance}."
+        await callback.message.delete()
+        await callback.message.answer(new_text, reply_markup=main_menu())
+    else:
+        next_time = datetime.fromtimestamp(user["last_daily"] + 86400).strftime("%Y-%m-%d %H:%M:%S")
+        new_text = f"⏳ Награду можно будет получить снова после {next_time}."
+        await callback.message.delete()
+        await callback.message.answer(new_text, reply_markup=main_menu())
+
+@dp.callback_query(F.data == "top_players")
+@subscription_required
+async def top_players(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("SELECT channel_bonus_received FROM users WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    already_received = result and result[0] == 1
+    cur.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10")
+    top_users = cur.fetchall()
     conn.close()
-    if already_received:
+    if not top_users:
+        text = "🏆 Топ игроков пока пуст."
+    else:
+        text = "🏆 Топ 10 игроков по балансу:\n\n"
+        for i, (user_id, balance) in enumerate(top_users, 1):
+            try:
+                user = await bot.get_chat(user_id)
+                username = user.username or f"ID {user_id}"
+                text += f"{i}. @{username} — ${balance}\n"
+            except:
+                text += f"{i}. ID {user_id} — ${balance}\n"
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=main_menu())
+
+@dp.callback_query(F.data == "work_menu")
+@subscription_required
+async def work_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    if not user["cars"]:
+        await callback.message.edit_text("У вас нет машин. Купите машину или работайте на заводе.", reply_markup=work_submenu())
+        return
+    builder = InlineKeyboardBuilder()
+    for car_item in user["cars"]:
+        car = get_car_by_id(car_item["id"])
+        if car:
+            fuel_status = f"{car_item['fuel']}/{car['fuel_capacity']} л"
+            text = f"{car['name']} (⛽ {fuel_status})"
+            callback_data = f"work_{car['id']}"
+            builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="work_main"))
+    builder.adjust(1)
+    await callback.message.delete()
+    await callback.message.answer("Выберите машину для работы:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("work_"))
+@subscription_required
+async def do_work(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    car_id = int(callback.data.split("_")[1])
+    user = get_user(user_id)
+    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
+    if not car_item:
+        await callback.message.edit_text("У вас нет такой машины!", reply_markup=work_submenu())
+        return
+    car_info = get_car_by_id(car_id)
+    if not car_info:
+        await callback.message.edit_text("Ошибка: машина не найдена.", reply_markup=work_submenu())
+        return
+    if car_item["fuel"] < car_info["fuel_consumption"]:
         await callback.message.edit_text(
-            "Ты уже получал этот бонус. Но ты всегда можешь заходить на канал, там много полезного!",
-            reply_markup=main_menu()
+            f"⛽ Недостаточно топлива! Нужно {car_info['fuel_consumption']} л, у вас {car_item['fuel']} л.\n"
+            "Заправьтесь в меню ⛽ Заправка.",
+            reply_markup=work_submenu()
         )
         return
-    if await is_user_subscribed(user_id):
-        new_balance = await give_channel_bonus(user_id)
+    place = random.choice(PLACES)
+    earning = random.randint(car_info["min_earn"], car_info["max_earn"])
+    new_balance = user["balance"] + earning
+    new_fuel = car_item["fuel"] - car_info["fuel_consumption"]
+    for c in user["cars"]:
+        if c["id"] == car_id:
+            c["fuel"] = new_fuel
+            break
+    exp_gain = random.randint(5, 15)
+    new_level, new_exp, leveled_up = add_exp(user_id, exp_gain)
+    
+    happy_chance = 0.7
+    if new_fuel < car_info["fuel_capacity"] * 0.2:
+        happy_chance -= 0.2
+    if user["level"] > 5:
+        happy_chance += 0.1
+    if random.random() < happy_chance:
+        new_happy = user["happy"] + 1
+        update_user(user_id, happy_passengers=new_happy)
+        rating_text = f"\n😊 Пассажир остался доволен!"
+    else:
+        new_angry = user["angry"] + 1
+        update_user(user_id, angry_passengers=new_angry)
+        rating_text = f"\n😠 Пассажир остался недоволен!"
+    
+    update_user(user_id, balance=new_balance, cars=user["cars"])
+    
+    event_text = ""
+    if random.random() < 0.1:
+        event_roll = random.randint(1, 3)
+        if event_roll == 1:
+            tip = random.randint(10, 50)
+            new_balance += tip
+            update_user(user_id, balance=new_balance)
+            add_tip_to_race(user_id, tip)
+            event_text = f"\n💵 Пассажир оставил чаевые: +${tip}!"
+        elif event_roll == 2:
+            fine = random.randint(10, 30)
+            new_balance -= fine
+            update_user(user_id, balance=new_balance)
+            event_text = f"\n👮 Вас оштрафовали: -${fine}!"
+        else:
+            found = random.randint(5, 25)
+            new_balance += found
+            update_user(user_id, balance=new_balance)
+            event_text = f"\n🍀 Вы нашли ${found}!"
+    level_text = f"\n🌟 Получено опыта: +{exp_gain}. "
+    if leveled_up:
+        level_text += f"Поздравляем! Вы достигли {new_level} уровня! +100$ бонус!"
+    await callback.message.edit_text(
+        f"🚖 Вы отвезли пассажира в {place} и заработали ${earning}.\n"
+        f"Расход топлива: {car_info['fuel_consumption']} л. Осталось топлива: {new_fuel:.1f} л.\n"
+        f"Теперь у вас ${new_balance}.{event_text}{rating_text}{level_text}",
+        reply_markup=work_submenu()
+    )
+
+@dp.callback_query(F.data == "factory")
+@subscription_required
+async def factory_work(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    earning = 5
+    new_balance = user["balance"] + earning
+    update_user(user_id, balance=new_balance)
+    await callback.message.edit_text(
+        f"🏭 Вы отработали смену на заводе и получили ${earning}. Теперь у вас ${new_balance}.",
+        reply_markup=work_submenu()
+    )
+
+@dp.callback_query(F.data == "garage")
+@subscription_required
+async def show_garage(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    if not user["cars"]:
+        new_text = "🚘 В гараже пусто. Купите машину!"
+        await callback.message.delete()
+        await callback.message.answer(new_text, reply_markup=work_submenu())
+    else:
+        text = "🚗 Ваши машины:\n"
+        for car_item in user["cars"]:
+            car = get_car_by_id(car_item["id"])
+            if car:
+                text += f"• {car['name']} (ID: {car_item['id']}) — топливо: {car_item['fuel']}/{car['fuel_capacity']} л\n"
+        text += "\nЗаправляйтесь в меню ⛽ Заправка.\nИспользуйте /hire ID чтобы нанять водителя."
+        await callback.message.delete()
+        await callback.message.answer(text, reply_markup=work_submenu())
+
+@dp.callback_query(F.data == "refuel_menu")
+@subscription_required
+async def refuel_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    if not user["cars"]:
+        await callback.message.edit_text("⛽ У вас нет машин. Сначала купите машину!", reply_markup=work_submenu())
+        return
+    builder = InlineKeyboardBuilder()
+    for car_item in user["cars"]:
+        car_info = get_car_by_id(car_item["id"])
+        if car_info:
+            text = f"{car_info['name']} (ID: {car_item['id']}) — ⛽ {car_item['fuel']}/{car_info['fuel_capacity']} л"
+            callback_data = f"refuel_{car_item['id']}"
+            builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
+        else:
+            logging.error(f"Машина с ID {car_item['id']} есть у пользователя {user_id}, но отсутствует в таблице cars.")
+            continue
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="work_main"))
+    builder.adjust(1)
+    await callback.message.edit_text("⛽ Выберите машину для заправки:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("refuel_") & ~F.data.contains("_full") & ~F.data.contains("_10") & ~F.data.contains("_50"))
+@subscription_required
+async def choose_fuel_option(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    try:
+        car_id = int(callback.data.split("_")[1])
+    except (IndexError, ValueError):
+        await callback.message.edit_text("Ошибка: неверный формат данных.", reply_markup=work_submenu())
+        return
+    await callback.message.edit_text(
+        f"⛽ Выберите количество топлива для машины (ID: {car_id}):",
+        reply_markup=fuel_options_keyboard(car_id)
+    )
+
+@dp.callback_query(F.data.startswith("fuel_"))
+@subscription_required
+async def process_fuel(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.message.edit_text("Ошибка: неверный формат команды заправки.", reply_markup=work_submenu())
+        return
+    try:
+        car_id = int(parts[1])
+        option = parts[2]
+    except ValueError:
+        await callback.message.edit_text("Ошибка: ID машины должен быть числом.", reply_markup=work_submenu())
+        return
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
+    if not car_item:
+        await callback.message.edit_text("❌ Ошибка: у вас нет машины с таким ID в гараже.", reply_markup=work_submenu())
+        return
+    car_info = get_car_by_id(car_id)
+    if not car_info:
+        logging.error(f"Машина с ID {car_id} не найдена в таблице cars.")
+        await callback.message.edit_text("❌ Ошибка: данные о машине не найдены. Сообщите администратору.", reply_markup=work_submenu())
+        return
+    if option == "full":
+        liters_to_add = car_info["fuel_capacity"] - car_item["fuel"]
+        if liters_to_add <= 0:
+            await callback.message.edit_text("⛽ Бак уже полный! Заправка не требуется.", reply_markup=work_submenu())
+            return
+    elif option in ("10", "50"):
+        try:
+            liters_to_add = int(option)
+        except ValueError:
+            await callback.message.edit_text("Ошибка: неверное количество литров.", reply_markup=work_submenu())
+            return
+    else:
+        await callback.message.edit_text("Ошибка: неизвестный вариант заправки.", reply_markup=work_submenu())
+        return
+    max_possible_add = car_info["fuel_capacity"] - car_item["fuel"]
+    if liters_to_add > max_possible_add:
+        liters_to_add = max_possible_add
+    if liters_to_add <= 0:
+        await callback.message.edit_text("⛽ Бак уже полный или вы пытаетесь заправить 0 литров.", reply_markup=work_submenu())
+        return
+    cost = liters_to_add * FUEL_PRICE
+    if user["balance"] < cost:
         await callback.message.edit_text(
-            f"✅ Спасибо за подписку! Бонус **{CHANNEL_BONUS}$** начислен на твой счёт.\n\n"
-            f"💰 Твой новый баланс: **${new_balance}**.\n"
-            "Приятной игры и заходи на канал почаще!",
-            reply_markup=main_menu(),
-            parse_mode="Markdown"
+            f"❌ Недостаточно средств. Нужно: ${cost}, у вас: ${user['balance']}.",
+            reply_markup=work_submenu()
+        )
+        return
+    new_fuel_level = min(car_item["fuel"] + liters_to_add, car_info["fuel_capacity"])
+    for c in user["cars"]:
+        if c["id"] == car_id:
+            c["fuel"] = new_fuel_level
+            break
+    new_balance = user["balance"] - cost
+    update_user(user_id, balance=new_balance, cars=user["cars"])
+    success_message = (
+        f"✅ Заправка прошла успешно!\n"
+        f"⛽ Машина: {car_info['name']}\n"
+        f"➕ Залито: {liters_to_add} л\n"
+        f"💵 Стоимость: ${cost}\n"
+        f"📊 Топливо в баке: {new_fuel_level}/{car_info['fuel_capacity']} л\n"
+        f"💰 Новый баланс: ${new_balance}"
+    )
+    await callback.message.edit_text(success_message, reply_markup=work_submenu())
+
+@dp.callback_query(F.data == "buy_menu")
+@subscription_required
+async def buy_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    cars = get_all_cars()
+    text = "Выберите машину для покупки:"
+    markup = cars_keyboard(cars, "buy")
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=markup)
+
+@dp.callback_query(F.data.startswith("buy_"))
+@subscription_required
+async def buy_car(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    car_id = int(callback.data.split("_")[1])
+    car_info = get_car_by_id(car_id)
+    if not car_info:
+        await callback.message.edit_text("Ошибка: машина не найдена.", reply_markup=work_submenu())
+        return
+    user = get_user(user_id)
+    if user["balance"] < car_info["price"]:
+        await callback.message.edit_text(
+            f"❌ Недостаточно средств. Нужно ${car_info['price']}, у вас ${user['balance']}.",
+            reply_markup=work_submenu()
+        )
+        return
+    new_car = {"id": car_id, "fuel": 0}
+    new_cars = user["cars"] + [new_car]
+    new_balance = user["balance"] - car_info["price"]
+    update_user(user_id, balance=new_balance, cars=new_cars)
+    await callback.message.edit_text(
+        f"✅ Вы купили {car_info['name']} за ${car_info['price']}!\n"
+        f"⚠️ Бак пуст! Не забудьте заправиться.\n"
+        f"Остаток баланса: ${new_balance}.",
+        reply_markup=work_submenu()
+    )
+
+@dp.callback_query(F.data == "sell_car_menu")
+@subscription_required
+async def sell_car_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    if not user["cars"]:
+        await callback.message.edit_text("У вас нет машин для продажи.", reply_markup=work_submenu())
+        return
+    builder = InlineKeyboardBuilder()
+    for car_item in user["cars"]:
+        car_info = get_car_by_id(car_item["id"])
+        if car_info:
+            sell_price = car_info["price"] // 2
+            text = f"{car_info['name']} — продажа за ${sell_price}"
+            callback_data = f"sell_{car_item['id']}"
+            builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="work_main"))
+    builder.adjust(1)
+    await callback.message.edit_text("Выберите машину для продажи:", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("sell_"))
+@subscription_required
+async def sell_car(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    car_id = int(callback.data.split("_")[1])
+    user = get_user(user_id)
+    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
+    if not car_item:
+        await callback.message.edit_text("Машина не найдена.", reply_markup=work_submenu())
+        return
+    car_info = get_car_by_id(car_id)
+    if not car_info:
+        await callback.message.edit_text("Ошибка данных машины.", reply_markup=work_submenu())
+        return
+    if car_id in user["hired_cars"]:
+        await callback.message.edit_text("❌ Сначала увольте водителя с этой машины.", reply_markup=work_submenu())
+        return
+    sell_price = car_info["price"] // 2
+    new_cars = [c for c in user["cars"] if c["id"] != car_id]
+    new_balance = user["balance"] + sell_price
+    update_user(user_id, balance=new_balance, cars=new_cars)
+    await callback.message.edit_text(f"✅ Вы продали {car_info['name']} за ${sell_price}.\nНовый баланс: ${new_balance}.", reply_markup=work_submenu())
+
+@dp.callback_query(F.data == "hired_menu")
+@subscription_required
+async def hired_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    hired = user["hired_cars"]
+    if not hired:
+        text = "👨‍✈️ У вас пока нет наёмных водителей.\n\nЧтобы нанять водителя, у вас должна быть машина в гараже. Используйте команду /hire <id машины>"
+        await callback.message.delete()
+        await callback.message.answer(text, reply_markup=work_submenu())
+        return
+    text = "👨‍✈️ **Ваши наёмные водители:**\n\n"
+    total_income = 0
+    for car_id in hired:
+        car_info = get_car_by_id(car_id)
+        if car_info:
+            income = car_info["min_earn"] * 0.1
+            total_income += income
+            text += f"• {car_info['name']} — приносит ${income:.2f} в час\n"
+    text += f"\n⏰ Доход начисляется каждый час.\n💵 **Общий доход в час:** ${total_income:.2f}"
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="💰 Собрать доход", callback_data="collect_hired_income"))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="work_main"))
+    builder.adjust(1)
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "collect_hired_income")
+@subscription_required
+async def collect_hired_income(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    hired = user["hired_cars"]
+    if not hired:
+        await callback.message.edit_text("У вас нет наёмных водителей.", reply_markup=work_submenu())
+        return
+    total = 0
+    for car_id in hired:
+        car_info = get_car_by_id(car_id)
+        if car_info:
+            total += car_info["min_earn"] * 0.1 * 1
+    new_balance = user["balance"] + int(total)
+    update_user(user_id, balance=new_balance)
+    await callback.message.delete()
+    await callback.message.answer(f"💰 Вы собрали доход с водителей: +${int(total)}!\nТеперь ваш баланс: ${new_balance}.", reply_markup=work_submenu())
+
+@dp.callback_query(F.data == "loan_menu")
+@subscription_required
+async def loan_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    new_text = "Введите сумму кредита, используя команду /loan <сумма>\nМаксимальная сумма кредита: 500.000$\nМаксимальное количество кредитов: 5\nНапример: /loan 5000"
+    await callback.message.delete()
+    await callback.message.answer(new_text, reply_markup=bank_submenu())
+
+@dp.callback_query(F.data == "repay_menu")
+@subscription_required
+async def repay_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    new_text = "Введите сумму погашения, используя команду /repay <сумма>\nНапример: /repay 2000"
+    await callback.message.delete()
+    await callback.message.answer(new_text, reply_markup=bank_submenu())
+
+@dp.callback_query(F.data == "tip_race_menu")
+@subscription_required
+async def tip_race_menu(callback: types.CallbackQuery):
+    await callback.answer()
+    apply_interest(callback.from_user.id)
+    user_id = callback.from_user.id
+    top = get_tip_race_top(10)
+    position, user_tips, total = get_user_tip_position(user_id)
+    week_start = datetime.fromtimestamp(get_current_week_start())
+    week_end = week_start + timedelta(days=6, hours=23, minutes=59)
+    text = (
+        f"🏁 **Гонка чаевых**\n\n"
+        f"📅 Неделя: {week_start.strftime('%d.%m')} - {week_end.strftime('%d.%m')}\n"
+        f"👥 Участников: {total}\n\n"
+    )
+    if position > 0:
+        text += f"📊 **Ваше место:** {position} (${user_tips} чаевых)\n\n"
+    else:
+        text += "📊 **Ваше место:** пока нет чаевых в этой гонке\n\n"
+    if top:
+        text += "🏆 **Топ-10 текущей недели:**\n"
+        for i, (uid, tips) in enumerate(top, 1):
+            try:
+                user = await bot.get_chat(uid)
+                username = user.username or f"ID {uid}"
+                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+                text += f"{medal} @{username} — ${tips}\n"
+            except:
+                text += f"{i}. ID {uid} — ${tips}\n"
+    else:
+        text += "🏆 Пока нет участников в этой гонке.\n\n"
+    text += "\n💡 **Как участвовать?**\nПросто получай чаевые от пассажиров во время поездок! Чем больше чаевых, тем выше место.\n\n"
+    text += "🎁 **Награды в воскресенье:**\n"
+    text += "🥇 1 место — 50.000$\n"
+    text += "🥈 2 место — 30.000$\n"
+    text += "🥉 3 место — 20.000$\n"
+    text += "4-10 места — 10.000$"
+    
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="🔄 Обновить", callback_data="tip_race_menu"))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="bank_main"))
+    builder.adjust(1)
+    
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+# ---------- КОМАНДЫ (MESSAGE HANDLERS) ----------
+@dp.message(Command("loan"))
+@subscription_required
+async def take_loan(message: types.Message):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /loan <сумма>\nНапример: /loan 5000")
+        return
+    try:
+        amount = int(args[1])
+        if amount <= 0:
+            raise ValueError
+    except:
+        await message.reply("❌ Сумма должна быть положительным числом.")
+        return
+    MAX_LOAN_AMOUNT = 500_000
+    if amount > MAX_LOAN_AMOUNT:
+        await message.reply(f"❌ Максимальная сумма кредита — ${MAX_LOAN_AMOUNT:,}. Введите меньшую сумму.")
+        return
+    user = get_user(user_id)
+    MAX_CREDITS = 5
+    if user["credits_count"] >= MAX_CREDITS:
+        await message.reply(f"❌ Вы уже взяли максимальное количество кредитов ({MAX_CREDITS}). Сначала погасите существующие.")
+        return
+    new_balance = user["balance"] + amount
+    new_debt = user["debt"] + amount
+    new_credits_count = user["credits_count"] + 1
+    update_user(user_id, balance=new_balance, debt=new_debt)
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET credits_count = ? WHERE user_id = ?", (new_credits_count, user_id))
+    conn.commit()
+    conn.close()
+    await message.reply(
+        f"✅ Вы взяли кредит ${amount}.\n"
+        f"Теперь ваш долг: ${new_debt}, баланс: ${new_balance}\n"
+        f"Кредитов взято: {new_credits_count}/{MAX_CREDITS}\n"
+        f"⚠️ Каждые 5 часов начисляется 5% на остаток долга!",
+        reply_markup=bank_submenu()
+    )
+
+@dp.message(Command("repay"))
+@subscription_required
+async def repay_loan(message: types.Message):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /repay <сумма>")
+        return
+    try:
+        amount = int(args[1])
+        if amount <= 0:
+            raise ValueError
+    except:
+        await message.reply("Сумма должна быть положительным числом.")
+        return
+    user = get_user(user_id)
+    if user["debt"] == 0:
+        await message.reply("У вас нет долга.")
+        return
+    if amount > user["balance"]:
+        await message.reply("Недостаточно средств.")
+        return
+    if amount > user["debt"]:
+        amount = user["debt"]
+    new_balance = user["balance"] - amount
+    new_debt = user["debt"] - amount
+    update_user(user_id, balance=new_balance, debt=new_debt)
+    if new_debt == 0:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT credits_count FROM users WHERE user_id = ?", (user_id,))
+        result = cur.fetchone()
+        current_credits = result[0] if result else 0
+        if current_credits > 0:
+            new_credits = current_credits - 1
+            cur.execute("UPDATE users SET credits_count = ? WHERE user_id = ?", (new_credits, user_id))
+            conn.commit()
+        conn.close()
+        await message.reply(
+            f"✅ Вы полностью погасили кредит!\n"
+            f"Остаток долга: ${new_debt}, баланс: ${new_balance}\n"
+            f"Активных кредитов осталось: {new_credits}",
+            reply_markup=bank_submenu()
         )
     else:
-        await callback.message.edit_text(
-            "❌ Я пока не вижу тебя в подписчиках канала.\n\n"
-            "1. Нажми кнопку **'🔔 Перейти на канал'** выше.\n"
-            "2. Подпишись на канал.\n"
-            "3. Вернись сюда и нажми **'✅ Я подписался'**.",
-            reply_markup=callback.message.reply_markup
+        await message.reply(
+            f"✅ Вы погасили ${amount} кредита.\n"
+            f"Остаток долга: ${new_debt}, баланс: ${new_balance}",
+            reply_markup=bank_submenu()
         )
 
-# ---------- АДМИН ПАНЕЛЬ ----------
-@dp.callback_query(F.data == "admin_panel")
-async def admin_panel(callback: types.CallbackQuery):
-    await callback.answer()
-    user_id = callback.from_user.id
-    if user_id not in admin_users:
-        await callback.message.edit_text("❌ У вас нет доступа к админ-панели.\nВведите /admin и правильный пароль для входа.", reply_markup=main_menu())
+@dp.message(Command("pay"))
+@subscription_required
+async def pay_user(message: types.Message):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 3:
+        await message.reply("Использование: /pay <сумма> <id пользователя>\nНапример: /pay 500 123456789")
         return
-    new_text = "👑 Админ панель\nВыберите действие:"
-    if callback.message.text == new_text and callback.message.reply_markup == admin_menu():
+    try:
+        amount = int(args[1])
+        if amount <= 0:
+            raise ValueError
+        target_user_id = int(args[2])
+    except:
+        await message.reply("Сумма должна быть положительным числом, ID пользователя - числом.")
         return
-    await callback.message.edit_text(new_text, reply_markup=admin_menu())
+    sender_id = message.from_user.id
+    sender = get_user(sender_id)
+    if sender["balance"] < amount:
+        await message.reply(f"❌ Недостаточно средств. У вас ${sender['balance']}.")
+        return
+    target = get_user(target_user_id)
+    new_sender_balance = sender["balance"] - amount
+    new_target_balance = target["balance"] + amount
+    update_user(sender_id, balance=new_sender_balance)
+    update_user(target_user_id, balance=new_target_balance)
+    await message.reply(f"✅ Вы перевели ${amount} пользователю {target_user_id}.\nВаш баланс: ${new_sender_balance}", reply_markup=main_menu())
+    try:
+        await bot.send_message(
+            target_user_id,
+            f"💰 Вам перевели ${amount} от пользователя {sender_id}.\nВаш баланс: ${new_target_balance}"
+        )
+    except:
+        pass
 
+@dp.message(Command("hire"))
+@subscription_required
+async def hire_driver(message: types.Message):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /hire <id машины>\nID машины можно узнать в гараже.")
+        return
+    try:
+        car_id = int(args[1])
+    except:
+        await message.reply("❌ ID машины должен быть числом.")
+        return
+    user = get_user(user_id)
+    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
+    if not car_item:
+        await message.reply("❌ У вас нет такой машины в гараже.")
+        return
+    if car_id in user["hired_cars"]:
+        await message.reply("❌ На эту машину уже нанят водитель.")
+        return
+    hire_cost = 500
+    if user["balance"] < hire_cost:
+        await message.reply(f"❌ Недостаточно средств для найма водителя. Нужно ${hire_cost}.")
+        return
+    new_balance = user["balance"] - hire_cost
+    new_hired = user["hired_cars"] + [car_id]
+    update_user(user_id, balance=new_balance, hired_cars=new_hired)
+    await message.reply(f"✅ Вы наняли водителя на машину {get_car_by_id(car_id)['name']} за ${hire_cost}!\n"
+                        f"Теперь он будет приносить доход. Зайдите в меню наёмных водителей для сбора.", reply_markup=work_submenu())
+
+@dp.message(Command("fire"))
+@subscription_required
+async def fire_driver(message: types.Message):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /fire <id машины>")
+        return
+    try:
+        car_id = int(args[1])
+    except:
+        await message.reply("❌ ID машины должен быть числом.")
+        return
+    user = get_user(user_id)
+    if car_id not in user["hired_cars"]:
+        await message.reply("❌ У вас нет наёмного водителя на эту машину.")
+        return
+    new_hired = [cid for cid in user["hired_cars"] if cid != car_id]
+    update_user(user_id, hired_cars=new_hired)
+    await message.reply(f"✅ Вы уволили водителя с машины {get_car_by_id(car_id)['name']}.", reply_markup=work_submenu())
+
+@dp.message(Command("sell"))
+@subscription_required
+async def sell_car_command(message: types.Message):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /sell <id машины>")
+        return
+    try:
+        car_id = int(args[1])
+    except:
+        await message.reply("❌ ID машины должен быть числом.")
+        return
+    user = get_user(user_id)
+    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
+    if not car_item:
+        await message.reply("❌ У вас нет такой машины.")
+        return
+    car_info = get_car_by_id(car_id)
+    if not car_info:
+        await message.reply("❌ Ошибка данных машины.")
+        return
+    if car_id in user["hired_cars"]:
+        await message.reply("❌ Сначала увольте водителя с этой машины.")
+        return
+    sell_price = car_info["price"] // 2
+    new_cars = [c for c in user["cars"] if c["id"] != car_id]
+    new_balance = user["balance"] + sell_price
+    update_user(user_id, balance=new_balance, cars=new_cars)
+    await message.reply(f"✅ Вы продали {car_info['name']} за ${sell_price}.\nНовый баланс: ${new_balance}.", reply_markup=work_submenu())
+
+@dp.message(Command("promo"))
+@subscription_required
+async def activate_promo(message: types.Message):
+    user_id = message.from_user.id
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /promo <код>")
+        return
+    code = args[1].upper()
+    user = get_user(user_id)
+    if code in user["used_promocodes"]:
+        await message.reply("❌ Вы уже активировали этот промокод.")
+        return
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT id, reward, max_uses, used_count FROM promocodes WHERE code = ? AND (expires_at = 0 OR expires_at > ?)", (code, int(time_module.time())))
+    promo = cur.fetchone()
+    if not promo:
+        conn.close()
+        await message.reply("❌ Неверный или истекший промокод.")
+        return
+    promo_id, reward, max_uses, used_count = promo
+    if used_count >= max_uses:
+        conn.close()
+        await message.reply("❌ Промокод уже использован максимальное количество раз.")
+        return
+    new_balance = user["balance"] + reward
+    new_used = user["used_promocodes"] + [code]
+    update_user(user_id, balance=new_balance, used_promocodes=new_used)
+    cur.execute("UPDATE promocodes SET used_count = used_count + 1 WHERE id = ?", (promo_id,))
+    conn.commit()
+    conn.close()
+    await message.reply(
+        f"✅ Промокод {code} активирован!\n"
+        f"Вы получили ${reward}!\n"
+        f"Новый баланс: ${new_balance}",
+        reply_markup=main_menu()
+    )
+
+# ---------- АДМИН-ХЕНДЛЕРЫ (без подписки) ----------
 @dp.callback_query(F.data == "admin_add_money")
 async def admin_add_money(callback: types.CallbackQuery):
     await callback.answer()
@@ -801,7 +1585,7 @@ async def admin_reset_user(message: types.Message):
     old_balance = target["balance"]
     old_debt = target["debt"]
     old_cars_count = len(target["cars"])
-    update_user(target_id, balance=START_BALANCE, debt=0, cars=[], used_promocodes=[], channel_bonus_received=0, last_interest=0)
+    update_user(target_id, balance=START_BALANCE, debt=0, cars=[], used_promocodes=[], last_interest=0)
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("UPDATE users SET credits_count = 0, exp = 0, level = 1, hired_cars = '[]', happy_passengers = 0, angry_passengers = 0, last_tip_reward_week = 0 WHERE user_id = ?", (target_id,))
@@ -810,7 +1594,8 @@ async def admin_reset_user(message: types.Message):
     await message.reply(
         f"✅ Счёт пользователя {target_id} обнулён!\n"
         f"Было: баланс ${old_balance}, долг ${old_debt}, машин {old_cars_count}\n"
-        f"Стало: баланс ${START_BALANCE}, долг 0, машин 0"
+        f"Стало: баланс ${START_BALANCE}, долг 0, машин 0",
+        reply_markup=admin_menu()
     )
     try:
         await bot.send_message(
@@ -874,7 +1659,6 @@ async def create_promo(message: types.Message):
         await message.reply("❌ Промокод с таким кодом уже существует.")
     conn.close()
 
-# ---------- НОВЫЙ АДМИН-ОБРАБОТЧИК ДЛЯ СБРОСА ВСЕХ ИГРОКОВ ----------
 @dp.callback_query(F.data == "admin_reset_all_confirm")
 async def admin_reset_all_confirm(callback: types.CallbackQuery):
     await callback.answer()
@@ -919,7 +1703,6 @@ async def admin_reset_all_execute(callback: types.CallbackQuery):
             angry_passengers = 0,
             used_promocodes = '[]',
             last_tip_reward_week = 0,
-            channel_bonus_received = 0,
             last_interest = 0
     """, (START_BALANCE,))
     cur.execute("DELETE FROM tip_race")
@@ -931,7 +1714,23 @@ async def admin_reset_all_execute(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
 
-# ---------- НОВЫЙ АДМИН-ОБРАБОТЧИК ДЛЯ РАССЫЛКИ ----------
+# ---------- РАССЫЛКА ----------
+async def send_broadcast_message(chat_id: int):
+    text = (
+        "🚖 **Таксист ждёт тебя!**\n\n"
+        "Зарабатывай деньги, покупай машины, участвуй в гонке чаевых!\n\n"
+        "➡️ Нажми /start чтобы начать игру."
+    )
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="🚖 Играть", callback_data="back_to_menu"))
+    builder.adjust(1)
+    try:
+        await bot.send_message(chat_id, text, reply_markup=builder.as_markup())
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка рассылки {chat_id}: {e}")
+        return False
+
 @dp.callback_query(F.data == "admin_broadcast_confirm")
 async def admin_broadcast_confirm(callback: types.CallbackQuery):
     await callback.answer()
@@ -944,8 +1743,11 @@ async def admin_broadcast_confirm(callback: types.CallbackQuery):
     builder.add(InlineKeyboardButton(text="❌ НЕТ, отмена", callback_data="admin_panel"))
     builder.adjust(1)
     await callback.message.edit_text(
-        "⚠️ **ВНИМАНИЕ!** Это отправит рекламное сообщение **всем пользователям**, которые ещё не получили бонус за подписку.\n\n"
-        f"Текст сообщения:\n\n{get_ad_text()}\n\n"
+        "⚠️ **ВНИМАНИЕ!** Это отправит рекламное сообщение **всем пользователям**.\n\n"
+        "Текст сообщения:\n\n"
+        "🚖 Таксист ждёт тебя!\n\n"
+        "Зарабатывай деньги, покупай машины, участвуй в гонке чаевых!\n\n"
+        "➡️ Нажми /start чтобы начать игру.\n\n"
         "Вы уверены?",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
@@ -963,14 +1765,14 @@ async def admin_broadcast_execute(callback: types.CallbackQuery):
 
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("SELECT user_id FROM users WHERE channel_bonus_received = 0")
+    cur.execute("SELECT user_id FROM users")
     users = cur.fetchall()
     conn.close()
 
     sent = 0
     failed = 0
     for (uid,) in users:
-        if await send_ad_message(uid):
+        if await send_broadcast_message(uid):
             sent += 1
         else:
             failed += 1
@@ -983,804 +1785,13 @@ async def admin_broadcast_execute(callback: types.CallbackQuery):
         reply_markup=admin_menu()
     )
 
-# ---------- ПРОМОКОДЫ ----------
-@dp.callback_query(F.data == "promocode_menu")
-async def promocode_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    text = (
-        "🎫 **Промокоды**\n\n"
-        "Вводи промокоды и получай бонусы!\n\n"
-        "Как получить промокод?\n"
-        "• Подпишись на наш канал @taxistchanel\n"
-        "• Следи за новостями и розыгрышами\n"
-        "• Участвуй в конкурсах\n\n"
-        "👉 **Чтобы активировать промокод, введи команду:**\n"
-        "`/promo ТВОЙ_КОД`\n\n"
-        "Например: `/promo BONUS30000`"
-    )
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url=CHANNEL_LINK))
-    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
-    builder.adjust(1)
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-
-@dp.message(Command("promo"))
-async def activate_promo(message: types.Message):
-    user_id = message.from_user.id
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Использование: /promo <код>")
-        return
-    code = args[1].upper()
-    user = get_user(user_id)
-    if code in user["used_promocodes"]:
-        await message.reply("❌ Вы уже активировали этот промокод.")
-        return
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT id, reward, max_uses, used_count FROM promocodes WHERE code = ? AND (expires_at = 0 OR expires_at > ?)", (code, int(time_module.time())))
-    promo = cur.fetchone()
-    if not promo:
-        conn.close()
-        await message.reply("❌ Неверный или истекший промокод.")
-        return
-    promo_id, reward, max_uses, used_count = promo
-    if used_count >= max_uses:
-        conn.close()
-        await message.reply("❌ Промокод уже использован максимальное количество раз.")
-        return
-    new_balance = user["balance"] + reward
-    new_used = user["used_promocodes"] + [code]
-    update_user(user_id, balance=new_balance, used_promocodes=new_used)
-    cur.execute("UPDATE promocodes SET used_count = used_count + 1 WHERE id = ?", (promo_id,))
-    conn.commit()
-    conn.close()
-    await message.reply(
-        f"✅ Промокод {code} активирован!\n"
-        f"Вы получили ${reward}!\n"
-        f"Новый баланс: ${new_balance}",
-        reply_markup=main_menu()
-    )
-
-# ---------- ГОНКА ЧАЕВЫХ ----------
-@dp.callback_query(F.data == "tip_race_menu")
-async def tip_race_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    top = get_tip_race_top(10)
-    position, user_tips, total = get_user_tip_position(user_id)
-    week_start = datetime.fromtimestamp(get_current_week_start())
-    week_end = week_start + timedelta(days=6, hours=23, minutes=59)
-    text = (
-        f"🏁 **Гонка чаевых**\n\n"
-        f"📅 Неделя: {week_start.strftime('%d.%m')} - {week_end.strftime('%d.%m')}\n"
-        f"👥 Участников: {total}\n\n"
-    )
-    if position > 0:
-        text += f"📊 **Ваше место:** {position} (${user_tips} чаевых)\n\n"
-    else:
-        text += "📊 **Ваше место:** пока нет чаевых в этой гонке\n\n"
-    if top:
-        text += "🏆 **Топ-10 текущей недели:**\n"
-        for i, (uid, tips) in enumerate(top, 1):
-            try:
-                user = await bot.get_chat(uid)
-                username = user.username or f"ID {uid}"
-                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-                text += f"{medal} @{username} — ${tips}\n"
-            except:
-                text += f"{i}. ID {uid} — ${tips}\n"
-    else:
-        text += "🏆 Пока нет участников в этой гонке.\n\n"
-    text += "\n💡 **Как участвовать?**\nПросто получай чаевые от пассажиров во время поездок! Чем больше чаевых, тем выше место.\n\n"
-    text += "🎁 **Награды в воскресенье:**\n"
-    text += "🥇 1 место — 50.000$\n"
-    text += "🥈 2 место — 30.000$\n"
-    text += "🥉 3 место — 20.000$\n"
-    text += "4-10 места — 10.000$"
-    
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="🔄 Обновить", callback_data="tip_race_menu"))
-    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
-    builder.adjust(1)
-    
-    await callback.message.delete()
-    await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-
-# ---------- ОСНОВНОЙ ГЕЙМПЛЕЙ ----------
-@dp.callback_query(F.data == "top_players")
-async def top_players(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10")
-    top_users = cur.fetchall()
-    conn.close()
-    if not top_users:
-        text = "🏆 Топ игроков пока пуст."
-    else:
-        text = "🏆 Топ 10 игроков по балансу:\n\n"
-        for i, (user_id, balance) in enumerate(top_users, 1):
-            try:
-                user = await bot.get_chat(user_id)
-                username = user.username or f"ID {user_id}"
-                text += f"{i}. @{username} — ${balance}\n"
-            except:
-                text += f"{i}. ID {user_id} — ${balance}\n"
-    await callback.message.delete()
-    await callback.message.answer(text, reply_markup=main_menu())
-
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.delete()
-    await callback.message.answer("Главное меню:", reply_markup=main_menu())
-
-@dp.callback_query(F.data == "daily")
-async def daily_reward(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    if can_claim_daily(user["last_daily"]):
-        new_balance = user["balance"] + DAILY_REWARD
-        update_user(user_id, balance=new_balance, last_daily=int(time_module.time()))
-        new_text = f"🎁 Вы получили ежедневную награду: +{DAILY_REWARD}$\nТеперь у вас ${new_balance}."
-        await callback.message.delete()
-        await callback.message.answer(new_text, reply_markup=main_menu())
-    else:
-        next_time = datetime.fromtimestamp(user["last_daily"] + 86400).strftime("%Y-%m-%d %H:%M:%S")
-        new_text = f"⏳ Награду можно будет получить снова после {next_time}."
-        await callback.message.delete()
-        await callback.message.answer(new_text, reply_markup=main_menu())
-
-@dp.callback_query(F.data == "status")
-async def show_status(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    cars_count = len(user["cars"])
-    hired_count = len(user["hired_cars"])
-    next_exp = exp_to_next_level(user["level"])
-    total_passengers = user["happy"] + user["angry"]
-    if total_passengers > 0:
-        rating = (user["happy"] / total_passengers) * 100
-        rating_line = f"😊 Довольных: {user['happy']} | 😠 Недовольных: {user['angry']}\n⭐ Рейтинг: {rating:.1f}%"
-    else:
-        rating_line = "😐 Пока нет пассажиров"
-    new_text = (f"📊 Ваш статус:\n"
-                f"💰 Баланс: ${user['balance']}\n"
-                f"💳 Долг: ${user['debt']}\n"
-                f"🚗 Машин в гараже: {cars_count}\n"
-                f"👨‍✈️ Наёмных водителей: {hired_count}\n"
-                f"📊 Кредитов взято: {user['credits_count']}/5\n"
-                f"📈 Уровень: {user['level']} (опыт: {user['exp']}/{next_exp})\n"
-                f"{rating_line}")
-    await callback.message.delete()
-    await callback.message.answer(new_text, reply_markup=main_menu())
-
-@dp.callback_query(F.data == "garage")
-async def show_garage(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    if not user["cars"]:
-        new_text = "🚘 В гараже пусто. Купите машину!"
-        await callback.message.delete()
-        await callback.message.answer(new_text, reply_markup=main_menu())
-    else:
-        text = "🚗 Ваши машины:\n"
-        for car_item in user["cars"]:
-            car = get_car_by_id(car_item["id"])
-            if car:
-                text += f"• {car['name']} (ID: {car_item['id']}) — топливо: {car_item['fuel']}/{car['fuel_capacity']} л\n"
-        text += "\nЗаправляйтесь в меню ⛽ Заправка.\nИспользуйте /hire ID чтобы нанять водителя."
-        await callback.message.delete()
-        await callback.message.answer(text, reply_markup=main_menu())
-
-@dp.callback_query(F.data == "level_info")
-async def level_info(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    next_exp = exp_to_next_level(user["level"])
-    text = (f"📈 **Ваш уровень:** {user['level']}\n"
-            f"✨ **Опыт:** {user['exp']}/{next_exp}\n\n"
-            f"За каждую поездку вы получаете опыт.\n"
-            f"С новым уровнем вы получаете бонус +100$!")
-    await callback.message.delete()
-    await callback.message.answer(text, reply_markup=main_menu())
-
-@dp.callback_query(F.data == "hired_menu")
-async def hired_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    hired = user["hired_cars"]
-    if not hired:
-        text = "👨‍✈️ У вас пока нет наёмных водителей.\n\nЧтобы нанять водителя, у вас должна быть машина в гараже. Используйте команду /hire <id машины>"
-        await callback.message.delete()
-        await callback.message.answer(text, reply_markup=main_menu())
-        return
-    text = "👨‍✈️ **Ваши наёмные водители:**\n\n"
-    total_income = 0
-    for car_id in hired:
-        car_info = get_car_by_id(car_id)
-        if car_info:
-            income = car_info["min_earn"] * 0.1
-            total_income += income
-            text += f"• {car_info['name']} — приносит ${income:.2f} в час\n"
-    text += f"\n⏰ Доход начисляется каждый час.\n💵 **Общий доход в час:** ${total_income:.2f}"
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="💰 Собрать доход", callback_data="collect_hired_income"))
-    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
-    builder.adjust(1)
-    await callback.message.delete()
-    await callback.message.answer(text, reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data == "collect_hired_income")
-async def collect_hired_income(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    hired = user["hired_cars"]
-    if not hired:
-        await callback.message.edit_text("У вас нет наёмных водителей.", reply_markup=main_menu())
-        return
-    total = 0
-    for car_id in hired:
-        car_info = get_car_by_id(car_id)
-        if car_info:
-            total += car_info["min_earn"] * 0.1 * 1
-    new_balance = user["balance"] + int(total)
-    update_user(user_id, balance=new_balance)
-    await callback.message.delete()
-    await callback.message.answer(f"💰 Вы собрали доход с водителей: +${int(total)}!\nТеперь ваш баланс: ${new_balance}.", reply_markup=main_menu())
-
-@dp.message(Command("hire"))
-async def hire_driver(message: types.Message):
-    user_id = message.from_user.id
-    apply_interest(user_id)
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Использование: /hire <id машины>\nID машины можно узнать в гараже.")
-        return
-    try:
-        car_id = int(args[1])
-    except:
-        await message.reply("❌ ID машины должен быть числом.")
-        return
-    user = get_user(user_id)
-    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
-    if not car_item:
-        await message.reply("❌ У вас нет такой машины в гараже.")
-        return
-    if car_id in user["hired_cars"]:
-        await message.reply("❌ На эту машину уже нанят водитель.")
-        return
-    hire_cost = 500
-    if user["balance"] < hire_cost:
-        await message.reply(f"❌ Недостаточно средств для найма водителя. Нужно ${hire_cost}.")
-        return
-    new_balance = user["balance"] - hire_cost
-    new_hired = user["hired_cars"] + [car_id]
-    update_user(user_id, balance=new_balance, hired_cars=new_hired)
-    await message.reply(f"✅ Вы наняли водителя на машину {get_car_by_id(car_id)['name']} за ${hire_cost}!\n"
-                        f"Теперь он будет приносить доход. Зайдите в меню наёмных водителей для сбора.", reply_markup=main_menu())
-
-@dp.message(Command("fire"))
-async def fire_driver(message: types.Message):
-    user_id = message.from_user.id
-    apply_interest(user_id)
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Использование: /fire <id машины>")
-        return
-    try:
-        car_id = int(args[1])
-    except:
-        await message.reply("❌ ID машины должен быть числом.")
-        return
-    user = get_user(user_id)
-    if car_id not in user["hired_cars"]:
-        await message.reply("❌ У вас нет наёмного водителя на эту машину.")
-        return
-    new_hired = [cid for cid in user["hired_cars"] if cid != car_id]
-    update_user(user_id, hired_cars=new_hired)
-    await message.reply(f"✅ Вы уволили водителя с машины {get_car_by_id(car_id)['name']}.", reply_markup=main_menu())
-
-@dp.callback_query(F.data == "sell_car_menu")
-async def sell_car_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    if not user["cars"]:
-        await callback.message.edit_text("У вас нет машин для продажи.", reply_markup=main_menu())
-        return
-    builder = InlineKeyboardBuilder()
-    for car_item in user["cars"]:
-        car_info = get_car_by_id(car_item["id"])
-        if car_info:
-            sell_price = car_info["price"] // 2
-            text = f"{car_info['name']} — продажа за ${sell_price}"
-            callback_data = f"sell_{car_item['id']}"
-            builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
-    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
-    builder.adjust(1)
-    await callback.message.edit_text("Выберите машину для продажи:", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("sell_"))
-async def sell_car(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    car_id = int(callback.data.split("_")[1])
-    user = get_user(user_id)
-    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
-    if not car_item:
-        await callback.message.edit_text("Машина не найдена.", reply_markup=main_menu())
-        return
-    car_info = get_car_by_id(car_id)
-    if not car_info:
-        await callback.message.edit_text("Ошибка данных машины.", reply_markup=main_menu())
-        return
-    if car_id in user["hired_cars"]:
-        await callback.message.edit_text("❌ Сначала увольте водителя с этой машины.", reply_markup=main_menu())
-        return
-    sell_price = car_info["price"] // 2
-    new_cars = [c for c in user["cars"] if c["id"] != car_id]
-    new_balance = user["balance"] + sell_price
-    update_user(user_id, balance=new_balance, cars=new_cars)
-    await callback.message.edit_text(f"✅ Вы продали {car_info['name']} за ${sell_price}.\nНовый баланс: ${new_balance}.", reply_markup=main_menu())
-
-@dp.message(Command("sell"))
-async def sell_car_command(message: types.Message):
-    user_id = message.from_user.id
-    apply_interest(user_id)
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Использование: /sell <id машины>")
-        return
-    try:
-        car_id = int(args[1])
-    except:
-        await message.reply("❌ ID машины должен быть числом.")
-        return
-    user = get_user(user_id)
-    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
-    if not car_item:
-        await message.reply("❌ У вас нет такой машины.")
-        return
-    car_info = get_car_by_id(car_id)
-    if not car_info:
-        await message.reply("❌ Ошибка данных машины.")
-        return
-    if car_id in user["hired_cars"]:
-        await message.reply("❌ Сначала увольте водителя с этой машины.")
-        return
-    sell_price = car_info["price"] // 2
-    new_cars = [c for c in user["cars"] if c["id"] != car_id]
-    new_balance = user["balance"] + sell_price
-    update_user(user_id, balance=new_balance, cars=new_cars)
-    await message.reply(f"✅ Вы продали {car_info['name']} за ${sell_price}.\nНовый баланс: ${new_balance}.", reply_markup=main_menu())
-
-@dp.callback_query(F.data == "work_menu")
-async def work_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    if not user["cars"]:
-        await callback.message.edit_text("У вас нет машин. Купите машину или работайте на заводе.", reply_markup=main_menu())
-        return
-    builder = InlineKeyboardBuilder()
-    for car_item in user["cars"]:
-        car = get_car_by_id(car_item["id"])
-        if car:
-            fuel_status = f"{car_item['fuel']}/{car['fuel_capacity']} л"
-            text = f"{car['name']} (⛽ {fuel_status})"
-            callback_data = f"work_{car['id']}"
-            builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
-    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
-    builder.adjust(1)
-    await callback.message.delete()
-    await callback.message.answer("Выберите машину для работы:", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("work_"))
-async def do_work(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    car_id = int(callback.data.split("_")[1])
-    user = get_user(user_id)
-    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
-    if not car_item:
-        await callback.message.edit_text("У вас нет такой машины!", reply_markup=main_menu())
-        return
-    car_info = get_car_by_id(car_id)
-    if not car_info:
-        await callback.message.edit_text("Ошибка: машина не найдена.", reply_markup=main_menu())
-        return
-    if car_item["fuel"] < car_info["fuel_consumption"]:
-        await callback.message.edit_text(
-            f"⛽ Недостаточно топлива! Нужно {car_info['fuel_consumption']} л, у вас {car_item['fuel']} л.\n"
-            "Заправьтесь в меню ⛽ Заправка.",
-            reply_markup=main_menu()
-        )
-        return
-    place = random.choice(PLACES)
-    earning = random.randint(car_info["min_earn"], car_info["max_earn"])
-    new_balance = user["balance"] + earning
-    new_fuel = car_item["fuel"] - car_info["fuel_consumption"]
-    for c in user["cars"]:
-        if c["id"] == car_id:
-            c["fuel"] = new_fuel
-            break
-    exp_gain = random.randint(5, 15)
-    new_level, new_exp, leveled_up = add_exp(user_id, exp_gain)
-    
-    happy_chance = 0.7
-    if new_fuel < car_info["fuel_capacity"] * 0.2:
-        happy_chance -= 0.2
-    if user["level"] > 5:
-        happy_chance += 0.1
-    if random.random() < happy_chance:
-        new_happy = user["happy"] + 1
-        update_user(user_id, happy_passengers=new_happy)
-        rating_text = f"\n😊 Пассажир остался доволен!"
-    else:
-        new_angry = user["angry"] + 1
-        update_user(user_id, angry_passengers=new_angry)
-        rating_text = f"\n😠 Пассажир остался недоволен!"
-    
-    update_user(user_id, balance=new_balance, cars=user["cars"])
-    
-    event_text = ""
-    if random.random() < 0.1:
-        event_roll = random.randint(1, 3)
-        if event_roll == 1:
-            tip = random.randint(10, 50)
-            new_balance += tip
-            update_user(user_id, balance=new_balance)
-            add_tip_to_race(user_id, tip)
-            event_text = f"\n💵 Пассажир оставил чаевые: +${tip}!"
-        elif event_roll == 2:
-            fine = random.randint(10, 30)
-            new_balance -= fine
-            update_user(user_id, balance=new_balance)
-            event_text = f"\n👮 Вас оштрафовали: -${fine}!"
-        else:
-            found = random.randint(5, 25)
-            new_balance += found
-            update_user(user_id, balance=new_balance)
-            event_text = f"\n🍀 Вы нашли ${found}!"
-    level_text = f"\n🌟 Получено опыта: +{exp_gain}. "
-    if leveled_up:
-        level_text += f"Поздравляем! Вы достигли {new_level} уровня! +100$ бонус!"
-    await callback.message.edit_text(
-        f"🚖 Вы отвезли пассажира в {place} и заработали ${earning}.\n"
-        f"Расход топлива: {car_info['fuel_consumption']} л. Осталось топлива: {new_fuel:.1f} л.\n"
-        f"Теперь у вас ${new_balance}.{event_text}{rating_text}{level_text}",
-        reply_markup=main_menu()
-    )
-
-@dp.callback_query(F.data == "factory")
-async def factory_work(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    earning = 5
-    new_balance = user["balance"] + earning
-    update_user(user_id, balance=new_balance)
-    await callback.message.edit_text(
-        f"🏭 Вы отработали смену на заводе и получили ${earning}. Теперь у вас ${new_balance}.",
-        reply_markup=main_menu()
-    )
-
-@dp.callback_query(F.data == "loan_menu")
-async def loan_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    new_text = "Введите сумму кредита, используя команду /loan <сумма>\nМаксимальная сумма кредита: 500.000$\nМаксимальное количество кредитов: 5\nНапример: /loan 5000"
-    await callback.message.delete()
-    await callback.message.answer(new_text, reply_markup=main_menu())
-
-@dp.message(Command("loan"))
-async def take_loan(message: types.Message):
-    user_id = message.from_user.id
-    apply_interest(user_id)
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Использование: /loan <сумма>\nНапример: /loan 5000")
-        return
-    try:
-        amount = int(args[1])
-        if amount <= 0:
-            raise ValueError
-    except:
-        await message.reply("❌ Сумма должна быть положительным числом.")
-        return
-    MAX_LOAN_AMOUNT = 500_000
-    if amount > MAX_LOAN_AMOUNT:
-        await message.reply(f"❌ Максимальная сумма кредита — ${MAX_LOAN_AMOUNT:,}. Введите меньшую сумму.")
-        return
-    user = get_user(user_id)
-    MAX_CREDITS = 5
-    if user["credits_count"] >= MAX_CREDITS:
-        await message.reply(f"❌ Вы уже взяли максимальное количество кредитов ({MAX_CREDITS}). Сначала погасите существующие.")
-        return
-    new_balance = user["balance"] + amount
-    new_debt = user["debt"] + amount
-    new_credits_count = user["credits_count"] + 1
-    update_user(user_id, balance=new_balance, debt=new_debt)
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET credits_count = ? WHERE user_id = ?", (new_credits_count, user_id))
-    conn.commit()
-    conn.close()
-    await message.reply(
-        f"✅ Вы взяли кредит ${amount}.\n"
-        f"Теперь ваш долг: ${new_debt}, баланс: ${new_balance}\n"
-        f"Кредитов взято: {new_credits_count}/{MAX_CREDITS}\n"
-        f"⚠️ Каждые 5 часов начисляется 5% на остаток долга!",
-        reply_markup=main_menu()
-    )
-
-@dp.callback_query(F.data == "repay_menu")
-async def repay_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    new_text = "Введите сумму погашения, используя команду /repay <сумма>\nНапример: /repay 2000"
-    await callback.message.delete()
-    await callback.message.answer(new_text, reply_markup=main_menu())
-
-@dp.message(Command("repay"))
-async def repay_loan(message: types.Message):
-    user_id = message.from_user.id
-    apply_interest(user_id)
-    args = message.text.split()
-    if len(args) != 2:
-        await message.reply("Использование: /repay <сумма>")
-        return
-    try:
-        amount = int(args[1])
-        if amount <= 0:
-            raise ValueError
-    except:
-        await message.reply("Сумма должна быть положительным числом.")
-        return
-    user = get_user(user_id)
-    if user["debt"] == 0:
-        await message.reply("У вас нет долга.")
-        return
-    if amount > user["balance"]:
-        await message.reply("Недостаточно средств.")
-        return
-    if amount > user["debt"]:
-        amount = user["debt"]
-    new_balance = user["balance"] - amount
-    new_debt = user["debt"] - amount
-    update_user(user_id, balance=new_balance, debt=new_debt)
-    if new_debt == 0:
-        conn = sqlite3.connect(DB_NAME)
-        cur = conn.cursor()
-        cur.execute("SELECT credits_count FROM users WHERE user_id = ?", (user_id,))
-        result = cur.fetchone()
-        current_credits = result[0] if result else 0
-        if current_credits > 0:
-            new_credits = current_credits - 1
-            cur.execute("UPDATE users SET credits_count = ? WHERE user_id = ?", (new_credits, user_id))
-            conn.commit()
-        conn.close()
-        await message.reply(
-            f"✅ Вы полностью погасили кредит!\n"
-            f"Остаток долга: ${new_debt}, баланс: ${new_balance}\n"
-            f"Активных кредитов осталось: {new_credits}",
-            reply_markup=main_menu()
-        )
-    else:
-        await message.reply(
-            f"✅ Вы погасили ${amount} кредита.\n"
-            f"Остаток долга: ${new_debt}, баланс: ${new_balance}",
-            reply_markup=main_menu()
-        )
-
-@dp.message(Command("pay"))
-async def pay_user(message: types.Message):
-    user_id = message.from_user.id
-    apply_interest(user_id)
-    args = message.text.split()
-    if len(args) != 3:
-        await message.reply("Использование: /pay <сумма> <id пользователя>\nНапример: /pay 500 123456789")
-        return
-    try:
-        amount = int(args[1])
-        if amount <= 0:
-            raise ValueError
-        target_user_id = int(args[2])
-    except:
-        await message.reply("Сумма должна быть положительным числом, ID пользователя - числом.")
-        return
-    sender_id = message.from_user.id
-    sender = get_user(sender_id)
-    if sender["balance"] < amount:
-        await message.reply(f"❌ Недостаточно средств. У вас ${sender['balance']}.")
-        return
-    target = get_user(target_user_id)
-    new_sender_balance = sender["balance"] - amount
-    new_target_balance = target["balance"] + amount
-    update_user(sender_id, balance=new_sender_balance)
-    update_user(target_user_id, balance=new_target_balance)
-    await message.reply(f"✅ Вы перевели ${amount} пользователю {target_user_id}.\nВаш баланс: ${new_sender_balance}")
-    try:
-        await bot.send_message(
-            target_user_id,
-            f"💰 Вам перевели ${amount} от пользователя {sender_id}.\nВаш баланс: ${new_target_balance}"
-        )
-    except:
-        pass
-
-@dp.callback_query(F.data == "buy_menu")
-async def buy_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    cars = get_all_cars()
-    text = "Выберите машину для покупки:"
-    markup = cars_keyboard(cars, "buy")
-    await callback.message.delete()
-    await callback.message.answer(text, reply_markup=markup)
-
-@dp.callback_query(F.data.startswith("buy_"))
-async def buy_car(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    car_id = int(callback.data.split("_")[1])
-    car_info = get_car_by_id(car_id)
-    if not car_info:
-        await callback.message.edit_text("Ошибка: машина не найдена.", reply_markup=main_menu())
-        return
-    user = get_user(user_id)
-    if user["balance"] < car_info["price"]:
-        await callback.message.edit_text(
-            f"❌ Недостаточно средств. Нужно ${car_info['price']}, у вас ${user['balance']}.",
-            reply_markup=main_menu()
-        )
-        return
-    new_car = {"id": car_id, "fuel": 0}
-    new_cars = user["cars"] + [new_car]
-    new_balance = user["balance"] - car_info["price"]
-    update_user(user_id, balance=new_balance, cars=new_cars)
-    await callback.message.edit_text(
-        f"✅ Вы купили {car_info['name']} за ${car_info['price']}!\n"
-        f"⚠️ Бак пуст! Не забудьте заправиться.\n"
-        f"Остаток баланса: ${new_balance}.",
-        reply_markup=main_menu()
-    )
-
-@dp.callback_query(F.data == "refuel_menu")
-async def refuel_menu(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    if not user["cars"]:
-        await callback.message.edit_text("⛽ У вас нет машин. Сначала купите машину!", reply_markup=main_menu())
-        return
-    builder = InlineKeyboardBuilder()
-    for car_item in user["cars"]:
-        car_info = get_car_by_id(car_item["id"])
-        if car_info:
-            text = f"{car_info['name']} (ID: {car_item['id']}) — ⛽ {car_item['fuel']}/{car_info['fuel_capacity']} л"
-            callback_data = f"refuel_{car_item['id']}"
-            builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
-        else:
-            logging.error(f"Машина с ID {car_item['id']} есть у пользователя {user_id}, но отсутствует в таблице cars.")
-            continue
-    builder.add(InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu"))
-    builder.adjust(1)
-    await callback.message.edit_text("⛽ Выберите машину для заправки:", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("refuel_") & ~F.data.contains("_full") & ~F.data.contains("_10") & ~F.data.contains("_50"))
-async def choose_fuel_option(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    try:
-        car_id = int(callback.data.split("_")[1])
-    except (IndexError, ValueError):
-        await callback.message.edit_text("Ошибка: неверный формат данных.", reply_markup=main_menu())
-        return
-    await callback.message.edit_text(
-        f"⛽ Выберите количество топлива для машины (ID: {car_id}):",
-        reply_markup=fuel_options_keyboard(car_id)
-    )
-
-@dp.callback_query(F.data.startswith("fuel_"))
-async def process_fuel(callback: types.CallbackQuery):
-    await callback.answer()
-    apply_interest(callback.from_user.id)
-    parts = callback.data.split("_")
-    if len(parts) < 3:
-        await callback.message.edit_text("Ошибка: неверный формат команды заправки.", reply_markup=main_menu())
-        return
-    try:
-        car_id = int(parts[1])
-        option = parts[2]
-    except ValueError:
-        await callback.message.edit_text("Ошибка: ID машины должен быть числом.", reply_markup=main_menu())
-        return
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    car_item = next((c for c in user["cars"] if c["id"] == car_id), None)
-    if not car_item:
-        await callback.message.edit_text("❌ Ошибка: у вас нет машины с таким ID в гараже.", reply_markup=main_menu())
-        return
-    car_info = get_car_by_id(car_id)
-    if not car_info:
-        logging.error(f"Машина с ID {car_id} не найдена в таблице cars.")
-        await callback.message.edit_text("❌ Ошибка: данные о машине не найдены. Сообщите администратору.", reply_markup=main_menu())
-        return
-    if option == "full":
-        liters_to_add = car_info["fuel_capacity"] - car_item["fuel"]
-        if liters_to_add <= 0:
-            await callback.message.edit_text("⛽ Бак уже полный! Заправка не требуется.", reply_markup=main_menu())
-            return
-    elif option in ("10", "50"):
-        try:
-            liters_to_add = int(option)
-        except ValueError:
-            await callback.message.edit_text("Ошибка: неверное количество литров.", reply_markup=main_menu())
-            return
-    else:
-        await callback.message.edit_text("Ошибка: неизвестный вариант заправки.", reply_markup=main_menu())
-        return
-    max_possible_add = car_info["fuel_capacity"] - car_item["fuel"]
-    if liters_to_add > max_possible_add:
-        liters_to_add = max_possible_add
-    if liters_to_add <= 0:
-        await callback.message.edit_text("⛽ Бак уже полный или вы пытаетесь заправить 0 литров.", reply_markup=main_menu())
-        return
-    cost = liters_to_add * FUEL_PRICE
-    if user["balance"] < cost:
-        await callback.message.edit_text(
-            f"❌ Недостаточно средств. Нужно: ${cost}, у вас: ${user['balance']}.",
-            reply_markup=main_menu()
-        )
-        return
-    new_fuel_level = min(car_item["fuel"] + liters_to_add, car_info["fuel_capacity"])
-    for c in user["cars"]:
-        if c["id"] == car_id:
-            c["fuel"] = new_fuel_level
-            break
-    new_balance = user["balance"] - cost
-    update_user(user_id, balance=new_balance, cars=user["cars"])
-    success_message = (
-        f"✅ Заправка прошла успешно!\n"
-        f"⛽ Машина: {car_info['name']}\n"
-        f"➕ Залито: {liters_to_add} л\n"
-        f"💵 Стоимость: ${cost}\n"
-        f"📊 Топливо в баке: {new_fuel_level}/{car_info['fuel_capacity']} л\n"
-        f"💰 Новый баланс: ${new_balance}"
-    )
-    await callback.message.edit_text(success_message, reply_markup=main_menu())
-
 # ---------- ЗАПУСК ----------
 async def main():
     init_db()
     print("Бот запущен...")
-    asyncio.create_task(daily_ad_task())
     asyncio.create_task(tip_race_scheduler())
+    asyncio.create_task(daily_subscription_check())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
