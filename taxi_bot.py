@@ -423,9 +423,12 @@ def subscription_required(handler):
 
 @dp.callback_query(F.data == "check_sponsors")
 @subscription_required
-async def check_sponsors_callback(callback: types.CallbackQuery):
+async def check_sponsors_callback(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer("✅ Спасибо за подписку! Добро пожаловать обратно.", reply_markup=main_menu())
 
 # ---------- ЕЖЕДНЕВНАЯ ПРОВЕРКА ПОДПИСОК ----------
@@ -538,7 +541,7 @@ def admin_menu():
 # ---------- ОСНОВНЫЕ КОМАНДЫ ----------
 @dp.message(Command("start"))
 @subscription_required
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, **kwargs):
     user_id = message.from_user.id
     get_user(user_id)
     await message.answer(
@@ -554,7 +557,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("commands"))
 @subscription_required
-async def cmd_commands(message: types.Message):
+async def cmd_commands(message: types.Message, **kwargs):
     commands_text = """
 📋 **Список команд:**
 
@@ -588,7 +591,7 @@ async def cmd_commands(message: types.Message):
     await message.reply(commands_text, parse_mode="Markdown")
 
 @dp.message(Command("admin"))
-async def cmd_admin(message: types.Message):
+async def cmd_admin(message: types.Message, **kwargs):
     user_id = message.from_user.id
     args = message.text.split()
     if len(args) != 2:
@@ -603,28 +606,37 @@ async def cmd_admin(message: types.Message):
 # ---------- ОБРАБОТЧИКИ ДЛЯ ПОДМЕНЮ ----------
 @dp.callback_query(F.data == "work_main")
 @subscription_required
-async def work_main(callback: types.CallbackQuery):
+async def work_main(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer("🚖 Выберите действие:", reply_markup=work_submenu())
 
 @dp.callback_query(F.data == "bank_main")
 @subscription_required
-async def bank_main(callback: types.CallbackQuery):
+async def bank_main(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer("🏦 Банковские операции:", reply_markup=bank_submenu())
 
 @dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
+async def back_to_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer("Главное меню:", reply_markup=main_menu())
 
 # ---------- ИГРОВЫЕ ХЕНДЛЕРЫ ----------
 @dp.callback_query(F.data == "status")
 @subscription_required
-async def show_status(callback: types.CallbackQuery):
+async def show_status(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -646,12 +658,15 @@ async def show_status(callback: types.CallbackQuery):
                 f"📊 Кредитов взято: {user['credits_count']}/5\n"
                 f"📈 Уровень: {user['level']} (опыт: {user['exp']}/{next_exp})\n"
                 f"{rating_line}")
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(new_text, reply_markup=main_menu())
 
 @dp.callback_query(F.data == "daily")
 @subscription_required
-async def daily_reward(callback: types.CallbackQuery):
+async def daily_reward(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -660,17 +675,23 @@ async def daily_reward(callback: types.CallbackQuery):
         new_balance = user["balance"] + DAILY_REWARD
         update_user(user_id, balance=new_balance, last_daily=int(time_module.time()))
         new_text = f"🎁 Вы получили ежедневную награду: +{DAILY_REWARD}$\nТеперь у вас ${new_balance}."
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение: {e}")
         await callback.message.answer(new_text, reply_markup=main_menu())
     else:
         next_time = datetime.fromtimestamp(user["last_daily"] + 86400).strftime("%Y-%m-%d %H:%M:%S")
         new_text = f"⏳ Награду можно будет получить снова после {next_time}."
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение: {e}")
         await callback.message.answer(new_text, reply_markup=main_menu())
 
 @dp.callback_query(F.data == "top_players")
 @subscription_required
-async def top_players(callback: types.CallbackQuery):
+async def top_players(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     conn = sqlite3.connect(DB_NAME)
@@ -689,12 +710,15 @@ async def top_players(callback: types.CallbackQuery):
                 text += f"{i}. @{username} — ${balance}\n"
             except:
                 text += f"{i}. ID {user_id} — ${balance}\n"
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(text, reply_markup=main_menu())
 
 @dp.callback_query(F.data == "work_menu")
 @subscription_required
-async def work_menu(callback: types.CallbackQuery):
+async def work_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -712,12 +736,15 @@ async def work_menu(callback: types.CallbackQuery):
             builder.add(InlineKeyboardButton(text=text, callback_data=callback_data))
     builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="work_main"))
     builder.adjust(1)
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer("Выберите машину для работы:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("work_"))
 @subscription_required
-async def do_work(callback: types.CallbackQuery):
+async def do_work(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -796,7 +823,7 @@ async def do_work(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "factory")
 @subscription_required
-async def factory_work(callback: types.CallbackQuery):
+async def factory_work(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -811,15 +838,15 @@ async def factory_work(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "garage")
 @subscription_required
-async def show_garage(callback: types.CallbackQuery):
+async def show_garage(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
     user = get_user(user_id)
     if not user["cars"]:
         new_text = "🚘 В гараже пусто. Купите машину!"
-        await callback.message.delete()
-        await callback.message.answer(new_text, reply_markup=work_submenu())
+        if callback.message.text != new_text or callback.message.reply_markup != work_submenu():
+            await callback.message.edit_text(new_text, reply_markup=work_submenu())
     else:
         text = "🚗 Ваши машины:\n"
         for car_item in user["cars"]:
@@ -827,12 +854,12 @@ async def show_garage(callback: types.CallbackQuery):
             if car:
                 text += f"• {car['name']} (ID: {car_item['id']}) — топливо: {car_item['fuel']}/{car['fuel_capacity']} л\n"
         text += "\nЗаправляйтесь в меню ⛽ Заправка.\nИспользуйте /hire ID чтобы нанять водителя."
-        await callback.message.delete()
-        await callback.message.answer(text, reply_markup=work_submenu())
+        if callback.message.text != text or callback.message.reply_markup != work_submenu():
+            await callback.message.edit_text(text, reply_markup=work_submenu())
 
 @dp.callback_query(F.data == "refuel_menu")
 @subscription_required
-async def refuel_menu(callback: types.CallbackQuery):
+async def refuel_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -856,7 +883,7 @@ async def refuel_menu(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("refuel_") & ~F.data.contains("_full") & ~F.data.contains("_10") & ~F.data.contains("_50"))
 @subscription_required
-async def choose_fuel_option(callback: types.CallbackQuery):
+async def choose_fuel_option(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     try:
@@ -871,7 +898,7 @@ async def choose_fuel_option(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("fuel_"))
 @subscription_required
-async def process_fuel(callback: types.CallbackQuery):
+async def process_fuel(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     parts = callback.data.split("_")
@@ -941,18 +968,21 @@ async def process_fuel(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "buy_menu")
 @subscription_required
-async def buy_menu(callback: types.CallbackQuery):
+async def buy_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     cars = get_all_cars()
     text = "Выберите машину для покупки:"
     markup = cars_keyboard(cars, "buy")
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(text, reply_markup=markup)
 
 @dp.callback_query(F.data.startswith("buy_"))
 @subscription_required
-async def buy_car(callback: types.CallbackQuery):
+async def buy_car(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -981,7 +1011,7 @@ async def buy_car(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "sell_car_menu")
 @subscription_required
-async def sell_car_menu(callback: types.CallbackQuery):
+async def sell_car_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -1003,7 +1033,7 @@ async def sell_car_menu(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("sell_"))
 @subscription_required
-async def sell_car(callback: types.CallbackQuery):
+async def sell_car(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -1028,7 +1058,7 @@ async def sell_car(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "hired_menu")
 @subscription_required
-async def hired_menu(callback: types.CallbackQuery):
+async def hired_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -1036,7 +1066,10 @@ async def hired_menu(callback: types.CallbackQuery):
     hired = user["hired_cars"]
     if not hired:
         text = "👨‍✈️ У вас пока нет наёмных водителей.\n\nЧтобы нанять водителя, у вас должна быть машина в гараже. Используйте команду /hire <id машины>"
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение: {e}")
         await callback.message.answer(text, reply_markup=work_submenu())
         return
     text = "👨‍✈️ **Ваши наёмные водители:**\n\n"
@@ -1052,12 +1085,15 @@ async def hired_menu(callback: types.CallbackQuery):
     builder.add(InlineKeyboardButton(text="💰 Собрать доход", callback_data="collect_hired_income"))
     builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="work_main"))
     builder.adjust(1)
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(text, reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "collect_hired_income")
 @subscription_required
-async def collect_hired_income(callback: types.CallbackQuery):
+async def collect_hired_income(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -1073,30 +1109,39 @@ async def collect_hired_income(callback: types.CallbackQuery):
             total += car_info["min_earn"] * 0.1 * 1
     new_balance = user["balance"] + int(total)
     update_user(user_id, balance=new_balance)
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(f"💰 Вы собрали доход с водителей: +${int(total)}!\nТеперь ваш баланс: ${new_balance}.", reply_markup=work_submenu())
 
 @dp.callback_query(F.data == "loan_menu")
 @subscription_required
-async def loan_menu(callback: types.CallbackQuery):
+async def loan_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     new_text = "Введите сумму кредита, используя команду /loan <сумма>\nМаксимальная сумма кредита: 500.000$\nМаксимальное количество кредитов: 5\nНапример: /loan 5000"
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(new_text, reply_markup=bank_submenu())
 
 @dp.callback_query(F.data == "repay_menu")
 @subscription_required
-async def repay_menu(callback: types.CallbackQuery):
+async def repay_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     new_text = "Введите сумму погашения, используя команду /repay <сумма>\nНапример: /repay 2000"
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(new_text, reply_markup=bank_submenu())
 
 @dp.callback_query(F.data == "tip_race_menu")
 @subscription_required
-async def tip_race_menu(callback: types.CallbackQuery):
+async def tip_race_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     apply_interest(callback.from_user.id)
     user_id = callback.from_user.id
@@ -1137,13 +1182,16 @@ async def tip_race_menu(callback: types.CallbackQuery):
     builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="bank_main"))
     builder.adjust(1)
     
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 # ---------- КОМАНДЫ (MESSAGE HANDLERS) ----------
 @dp.message(Command("loan"))
 @subscription_required
-async def take_loan(message: types.Message):
+async def take_loan(message: types.Message, **kwargs):
     user_id = message.from_user.id
     apply_interest(user_id)
     args = message.text.split()
@@ -1185,7 +1233,7 @@ async def take_loan(message: types.Message):
 
 @dp.message(Command("repay"))
 @subscription_required
-async def repay_loan(message: types.Message):
+async def repay_loan(message: types.Message, **kwargs):
     user_id = message.from_user.id
     apply_interest(user_id)
     args = message.text.split()
@@ -1237,7 +1285,7 @@ async def repay_loan(message: types.Message):
 
 @dp.message(Command("pay"))
 @subscription_required
-async def pay_user(message: types.Message):
+async def pay_user(message: types.Message, **kwargs):
     user_id = message.from_user.id
     apply_interest(user_id)
     args = message.text.split()
@@ -1273,7 +1321,7 @@ async def pay_user(message: types.Message):
 
 @dp.message(Command("hire"))
 @subscription_required
-async def hire_driver(message: types.Message):
+async def hire_driver(message: types.Message, **kwargs):
     user_id = message.from_user.id
     apply_interest(user_id)
     args = message.text.split()
@@ -1305,7 +1353,7 @@ async def hire_driver(message: types.Message):
 
 @dp.message(Command("fire"))
 @subscription_required
-async def fire_driver(message: types.Message):
+async def fire_driver(message: types.Message, **kwargs):
     user_id = message.from_user.id
     apply_interest(user_id)
     args = message.text.split()
@@ -1327,7 +1375,7 @@ async def fire_driver(message: types.Message):
 
 @dp.message(Command("sell"))
 @subscription_required
-async def sell_car_command(message: types.Message):
+async def sell_car_command(message: types.Message, **kwargs):
     user_id = message.from_user.id
     apply_interest(user_id)
     args = message.text.split()
@@ -1359,7 +1407,7 @@ async def sell_car_command(message: types.Message):
 
 @dp.message(Command("promo"))
 @subscription_required
-async def activate_promo(message: types.Message):
+async def activate_promo(message: types.Message, **kwargs):
     user_id = message.from_user.id
     args = message.text.split()
     if len(args) != 2:
@@ -1398,7 +1446,7 @@ async def activate_promo(message: types.Message):
 
 # ---------- АДМИН-ХЕНДЛЕРЫ (без подписки) ----------
 @dp.callback_query(F.data == "admin_add_money")
-async def admin_add_money(callback: types.CallbackQuery):
+async def admin_add_money(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1410,7 +1458,7 @@ async def admin_add_money(callback: types.CallbackQuery):
     await callback.message.edit_text(f"💰 Вы получили 1.000.000$\nВаш баланс: ${new_balance}", reply_markup=admin_menu())
 
 @dp.callback_query(F.data == "admin_transfer_menu")
-async def admin_transfer_menu(callback: types.CallbackQuery):
+async def admin_transfer_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1423,7 +1471,7 @@ async def admin_transfer_menu(callback: types.CallbackQuery):
     )
 
 @dp.message(Command("admin_transfer"))
-async def admin_transfer(message: types.Message):
+async def admin_transfer(message: types.Message, **kwargs):
     user_id = message.from_user.id
     if user_id not in admin_users:
         await message.reply("❌ Нет доступа.")
@@ -1450,7 +1498,7 @@ async def admin_transfer(message: types.Message):
         pass
 
 @dp.callback_query(F.data == "admin_give_car_menu")
-async def admin_give_car_menu(callback: types.CallbackQuery):
+async def admin_give_car_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1467,7 +1515,7 @@ async def admin_give_car_menu(callback: types.CallbackQuery):
     await callback.message.edit_text("Выберите машину для выдачи:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("admin_give_car_"))
-async def admin_give_car(callback: types.CallbackQuery):
+async def admin_give_car(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     admin_id = callback.from_user.id
     if admin_id not in admin_users:
@@ -1481,7 +1529,7 @@ async def admin_give_car(callback: types.CallbackQuery):
     )
 
 @dp.message(Command("admin_give_car"))
-async def admin_give_car_command(message: types.Message):
+async def admin_give_car_command(message: types.Message, **kwargs):
     user_id = message.from_user.id
     if user_id not in admin_users:
         await message.reply("❌ Нет доступа.")
@@ -1511,7 +1559,7 @@ async def admin_give_car_command(message: types.Message):
         pass
 
 @dp.callback_query(F.data == "admin_full_fuel")
-async def admin_full_fuel(callback: types.CallbackQuery):
+async def admin_full_fuel(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1529,7 +1577,7 @@ async def admin_full_fuel(callback: types.CallbackQuery):
     await callback.message.edit_text("⛽ Бак всех ваших машин полностью заправлен!", reply_markup=admin_menu())
 
 @dp.callback_query(F.data == "admin_stats")
-async def admin_stats(callback: types.CallbackQuery):
+async def admin_stats(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1551,7 +1599,7 @@ async def admin_stats(callback: types.CallbackQuery):
     await callback.message.edit_text(stats_text, reply_markup=admin_menu())
 
 @dp.callback_query(F.data == "admin_reset_user_menu")
-async def admin_reset_user_menu(callback: types.CallbackQuery):
+async def admin_reset_user_menu(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1567,7 +1615,7 @@ async def admin_reset_user_menu(callback: types.CallbackQuery):
     )
 
 @dp.message(Command("admin_reset"))
-async def admin_reset_user(message: types.Message):
+async def admin_reset_user(message: types.Message, **kwargs):
     user_id = message.from_user.id
     if user_id not in admin_users:
         await message.reply("❌ Нет доступа.")
@@ -1607,7 +1655,7 @@ async def admin_reset_user(message: types.Message):
         pass
 
 @dp.callback_query(F.data == "admin_create_promo")
-async def admin_create_promo(callback: types.CallbackQuery):
+async def admin_create_promo(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1621,7 +1669,7 @@ async def admin_create_promo(callback: types.CallbackQuery):
     )
 
 @dp.message(Command("create_promo"))
-async def create_promo(message: types.Message):
+async def create_promo(message: types.Message, **kwargs):
     user_id = message.from_user.id
     if user_id not in admin_users:
         await message.reply("❌ Нет доступа.")
@@ -1660,7 +1708,7 @@ async def create_promo(message: types.Message):
     conn.close()
 
 @dp.callback_query(F.data == "admin_reset_all_confirm")
-async def admin_reset_all_confirm(callback: types.CallbackQuery):
+async def admin_reset_all_confirm(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1682,7 +1730,7 @@ async def admin_reset_all_confirm(callback: types.CallbackQuery):
     )
 
 @dp.callback_query(F.data == "admin_reset_all_execute")
-async def admin_reset_all_execute(callback: types.CallbackQuery):
+async def admin_reset_all_execute(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1732,7 +1780,7 @@ async def send_broadcast_message(chat_id: int):
         return False
 
 @dp.callback_query(F.data == "admin_broadcast_confirm")
-async def admin_broadcast_confirm(callback: types.CallbackQuery):
+async def admin_broadcast_confirm(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
@@ -1754,7 +1802,7 @@ async def admin_broadcast_confirm(callback: types.CallbackQuery):
     )
 
 @dp.callback_query(F.data == "admin_broadcast_execute")
-async def admin_broadcast_execute(callback: types.CallbackQuery):
+async def admin_broadcast_execute(callback: types.CallbackQuery, **kwargs):
     await callback.answer()
     user_id = callback.from_user.id
     if user_id not in admin_users:
