@@ -117,6 +117,17 @@ def init_db():
             fuel_consumption REAL
         )
     """)
+    
+    # Таблица для вкладов
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS deposits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount INTEGER DEFAULT 0,
+            last_interest INTEGER DEFAULT 0
+        )
+    """)
+    
     cur.execute("SELECT COUNT(*) FROM cars")
     if cur.fetchone()[0] == 0:
         cars_data = [
@@ -414,7 +425,12 @@ def subscription_required(handler):
 
             if isinstance(event, types.CallbackQuery):
                 await event.answer()
-                await event.message.edit_text(text, reply_markup=builder.as_markup())
+                # Удаляем старое сообщение и отправляем новое
+                try:
+                    await event.message.delete()
+                except Exception as e:
+                    logging.warning(f"Не удалось удалить сообщение: {e}")
+                await event.message.answer(text, reply_markup=builder.as_markup())
             else:
                 await event.reply(text, reply_markup=builder.as_markup())
             return
@@ -462,6 +478,52 @@ async def daily_subscription_check():
                     logging.error(f"Не удалось отправить уведомление {user_id}: {e}")
             await asyncio.sleep(0.5)
 
+# ---------- ФУНКЦИИ ДЛЯ ВКЛАДОВ ----------
+def get_user_deposits(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT id, amount, last_interest FROM deposits WHERE user_id = ?", (user_id,))
+    rows = cur.fetchall()
+    conn.close()
+    return [{"id": r[0], "amount": r[1], "last_interest": r[2]} for r in rows]
+
+def create_deposit(user_id, amount):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO deposits (user_id, amount, last_interest) VALUES (?, ?, ?)", (user_id, amount, int(time_module.time())))
+    conn.commit()
+    conn.close()
+
+def add_to_deposit(deposit_id, amount):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE deposits SET amount = amount + ? WHERE id = ?", (amount, deposit_id))
+    conn.commit()
+    conn.close()
+
+def apply_deposit_interest(deposit_id):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT amount, last_interest FROM deposits WHERE id = ?", (deposit_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return 0, 0
+    amount, last = row
+    now = int(time_module.time())
+    elapsed = now - last
+    intervals = elapsed // (48 * 3600)  # каждые 2 дня
+    if intervals > 0:
+        interest = int(amount * 0.02 * intervals)
+        new_amount = amount + interest
+        new_last = last + intervals * 48 * 3600
+        cur.execute("UPDATE deposits SET amount = ?, last_interest = ? WHERE id = ?", (new_amount, new_last, deposit_id))
+        conn.commit()
+        conn.close()
+        return new_amount, interest
+    conn.close()
+    return amount, 0
+
 # ---------- КЛАВИАТУРЫ ----------
 def main_menu():
     builder = InlineKeyboardBuilder()
@@ -493,6 +555,7 @@ def bank_submenu():
     builder.add(InlineKeyboardButton(text="💰 Взять кредит", callback_data="loan_menu"))
     builder.add(InlineKeyboardButton(text="💳 Погасить кредит", callback_data="repay_menu"))
     builder.add(InlineKeyboardButton(text="🏁 Гонка чаевых", callback_data="tip_race_menu"))
+    builder.add(InlineKeyboardButton(text="💳 Мои вклады", callback_data="deposits_menu"))
     builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
     builder.adjust(2)
     return builder.as_markup()
@@ -572,6 +635,8 @@ async def cmd_commands(message: types.Message, **kwargs):
 /fire <id машины> - Уволить водителя
 /sell <id машины> - Продать машину (половина стоимости)
 /promo <код> - Активировать промокод
+/deposit <сумма> - Положить деньги на вклад (от 20 000 до 100 000$, максимум 2 вклада, каждый до 500 000$, +2% каждые 2 дня)
+/withdraw <id вклада> - Закрыть вклад и получить деньги на баланс
 
 🎮 **Игровые механики:**
 • Работа таксистом — зарабатывайте деньги, тратьте топливо
@@ -586,6 +651,7 @@ async def cmd_commands(message: types.Message, **kwargs):
 • Наёмные водители — купите машину и наймите водителя, он будет приносить доход
 • Промокоды — активируйте специальные коды для получения бонусов
 • Гонка чаевых — соревнуйтесь с другими игроками за призы
+• Вклады — кладите деньги под 2% каждые 2 дня (до 2 вкладов, макс. 500 000$ на вклад)
 
 ⚠️ Кредиты нужно вовремя погашать, иначе проценты быстро увеличат долг!
     """
@@ -736,7 +802,11 @@ async def promocode_menu(callback: types.CallbackQuery, **kwargs):
     builder.add(InlineKeyboardButton(text="🔔 Перейти на канал", url="https://t.me/taxistchanel"))
     builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"))
     builder.adjust(1)
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
+    await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "work_menu")
 @subscription_required
@@ -1210,6 +1280,84 @@ async def tip_race_menu(callback: types.CallbackQuery, **kwargs):
         logging.warning(f"Не удалось удалить сообщение: {e}")
     await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
+# ---------- ОБРАБОТЧИКИ ДЛЯ ВКЛАДОВ ----------
+@dp.callback_query(F.data == "deposits_menu")
+@subscription_required
+async def show_deposits(callback: types.CallbackQuery, **kwargs):
+    await callback.answer()
+    user_id = callback.from_user.id
+    deposits = get_user_deposits(user_id)
+    # Начислим проценты по каждому вкладу
+    for d in deposits:
+        apply_deposit_interest(d["id"])
+    deposits = get_user_deposits(user_id)  # обновим после начисления
+
+    text = "💳 **Ваши вклады:**\n\n"
+    if not deposits:
+        text += "У вас пока нет вкладов. Минимальная сумма для открытия: 20 000$.\n"
+        text += "Используйте команду /deposit <сумма> чтобы открыть вклад.\n"
+        text += "Процентная ставка: 2% каждые 2 дня."
+    else:
+        for d in deposits:
+            text += f"Вклад #{d['id']}: ${d['amount']}\n"
+        text += f"\nВсего вкладов: {len(deposits)}/2\n"
+        text += "Вы можете пополнить существующий вклад через /deposit (сумма будет добавлена к первому подходящему вкладу, не превышающему лимит 500 000$)."
+    
+    builder = InlineKeyboardBuilder()
+    # Добавляем кнопки для закрытия каждого вклада
+    for d in deposits:
+        builder.add(InlineKeyboardButton(text=f"🔒 Закрыть вклад #{d['id']}", callback_data=f"close_deposit_{d['id']}"))
+    builder.add(InlineKeyboardButton(text="🔙 Назад", callback_data="bank_main"))
+    builder.adjust(1)
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
+    await callback.message.answer(text, reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("close_deposit_"))
+@subscription_required
+async def close_deposit_callback(callback: types.CallbackQuery, **kwargs):
+    await callback.answer()
+    deposit_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    
+    # Начисляем проценты перед закрытием
+    new_amount, interest = apply_deposit_interest(deposit_id)
+    
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    # Проверяем, принадлежит ли вклад пользователю
+    cur.execute("SELECT user_id, amount FROM deposits WHERE id = ?", (deposit_id,))
+    row = cur.fetchone()
+    if not row or row[0] != user_id:
+        await callback.message.edit_text("❌ Вклад не найден или не принадлежит вам.")
+        conn.close()
+        return
+    
+    amount = row[1]
+    # Забираем деньги на баланс
+    user = get_user(user_id)
+    new_balance = user["balance"] + amount
+    update_user(user_id, balance=new_balance)
+    
+    # Удаляем вклад
+    cur.execute("DELETE FROM deposits WHERE id = ?", (deposit_id,))
+    conn.commit()
+    conn.close()
+    
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение: {e}")
+    await callback.message.answer(
+        f"✅ Вклад №{deposit_id} закрыт.\n"
+        f"💰 Сумма ${amount} переведена на ваш баланс.\n"
+        f"💵 Начислено процентов за последний период: ${interest}.\n"
+        f"Новый баланс: ${new_balance}.",
+        reply_markup=bank_submenu()
+    )
+
 # ---------- КОМАНДЫ (MESSAGE HANDLERS) ----------
 @dp.message(Command("loan"))
 @subscription_required
@@ -1464,6 +1612,98 @@ async def activate_promo(message: types.Message, **kwargs):
         f"Вы получили ${reward}!\n"
         f"Новый баланс: ${new_balance}",
         reply_markup=main_menu()
+    )
+
+@dp.message(Command("deposit"))
+@subscription_required
+async def cmd_deposit(message: types.Message, **kwargs):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /deposit <сумма>\nМинимальная сумма: 20 000$, максимальная за раз: 100 000$")
+        return
+    try:
+        amount = int(args[1])
+        if amount < 20000 or amount > 100000:
+            raise ValueError
+    except:
+        await message.reply("❌ Сумма должна быть от 20 000 до 100 000$.")
+        return
+
+    user = get_user(user_id)
+    if user["balance"] < amount:
+        await message.reply("❌ Недостаточно средств на счету.")
+        return
+
+    deposits = get_user_deposits(user_id)
+    # Начислим проценты по существующим
+    for d in deposits:
+        apply_deposit_interest(d["id"])
+    deposits = get_user_deposits(user_id)
+
+    if len(deposits) >= 2:
+        # Пополняем существующий, если есть подходящий
+        possible = None
+        for d in deposits:
+            if d["amount"] + amount <= 500000:
+                possible = d
+                break
+        if possible is None:
+            await message.reply("❌ Невозможно пополнить: все вклады достигнут лимита 500 000$.")
+            return
+        # Пополняем
+        add_to_deposit(possible["id"], amount)
+        update_user(user_id, balance=user["balance"] - amount)
+        await message.reply(f"✅ Вы пополнили вклад №{possible['id']} на ${amount}. Текущая сумма: {possible['amount'] + amount}$")
+    else:
+        # Создаем новый вклад
+        create_deposit(user_id, amount)
+        update_user(user_id, balance=user["balance"] - amount)
+        await message.reply(f"✅ Вы открыли новый вклад на ${amount}. Максимум можно иметь 2 вклада.")
+
+@dp.message(Command("withdraw"))
+@subscription_required
+async def cmd_withdraw(message: types.Message, **kwargs):
+    user_id = message.from_user.id
+    apply_interest(user_id)
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Использование: /withdraw <id вклада>\nID можно посмотреть в меню 'Мои вклады'.")
+        return
+    try:
+        deposit_id = int(args[1])
+    except:
+        await message.reply("❌ ID вклада должен быть числом.")
+        return
+    
+    # Начисляем проценты перед закрытием
+    new_amount, interest = apply_deposit_interest(deposit_id)
+    
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, amount FROM deposits WHERE id = ?", (deposit_id,))
+    row = cur.fetchone()
+    if not row or row[0] != user_id:
+        await message.reply("❌ Вклад не найден или не принадлежит вам.")
+        conn.close()
+        return
+    
+    amount = row[1]
+    user = get_user(user_id)
+    new_balance = user["balance"] + amount
+    update_user(user_id, balance=new_balance)
+    
+    cur.execute("DELETE FROM deposits WHERE id = ?", (deposit_id,))
+    conn.commit()
+    conn.close()
+    
+    await message.reply(
+        f"✅ Вклад №{deposit_id} закрыт.\n"
+        f"💰 Сумма ${amount} переведена на ваш баланс.\n"
+        f"💵 Начислено процентов за последний период: ${interest}.\n"
+        f"Новый баланс: ${new_balance}.",
+        reply_markup=bank_submenu()
     )
 
 # ---------- АДМИН-ХЕНДЛЕРЫ (без подписки) ----------
@@ -1788,6 +2028,7 @@ async def admin_reset_all_execute(callback: types.CallbackQuery, **kwargs):
             last_interest = 0
     """, (START_BALANCE,))
     cur.execute("DELETE FROM tip_race")
+    cur.execute("DELETE FROM deposits")  # очищаем вклады при сбросе
     conn.commit()
     conn.close()
     await callback.message.edit_text(
